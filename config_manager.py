@@ -1,3 +1,5 @@
+# /opt/remna_bot/config_manager.py
+
 import sys
 import os
 from importlib.machinery import SourceFileLoader
@@ -9,7 +11,7 @@ def format_value(value):
         return f"'{value}'"
     if value is None:
         return "None"
-    return value
+    return str(value)
 
 def load_config():
     if not os.path.exists(CONFIG_PATH):
@@ -18,6 +20,11 @@ def load_config():
     return SourceFileLoader("remna_config_module", CONFIG_PATH).load_module()
 
 def rewrite_config(config_module):
+    default_secret = getattr(config_module, 'WEBHOOK_SECRET', '')
+    if not default_secret:
+        import secrets
+        default_secret = secrets.token_hex(32) # 64 characters
+
     content = f"""# config.py
 
 # botfather API token:
@@ -31,6 +38,13 @@ PANEL_API_TOKEN = {format_value(getattr(config_module, 'PANEL_API_TOKEN', ''))}
 
 # telegram user ID
 ADMIN_USER_ID = {getattr(config_module, 'ADMIN_USER_ID', 0)}
+
+# --- Notification Settings ---
+# Set to True to enable real-time notifications via webhook
+NOTIFICATIONS_ENABLED = {getattr(config_module, 'NOTIFICATIONS_ENABLED', False)}
+
+# This secret is used to sign the webhook payload and must match the one in your panel's .env file.
+WEBHOOK_SECRET = {format_value(default_secret)}
 
 # node list
 NODES = {getattr(config_module, 'NODES', {})}
@@ -83,9 +97,31 @@ def remove_node(name):
     rewrite_config(config)
     print(f"Successfully removed node '{name}'.")
 
+def toggle_notifications():
+    config = load_config()
+    current_status = getattr(config, 'NOTIFICATIONS_ENABLED', False)
+    setattr(config, 'NOTIFICATIONS_ENABLED', not current_status)
+    rewrite_config(config)
+    new_status = "enabled" if not current_status else "disabled"
+    print(f"Notifications have been {new_status}.")
+    if not current_status:
+        config = load_config()
+        webhook_secret = getattr(config, 'WEBHOOK_SECRET', 'N/A')
+        print("\n--- INSTRUCTIONS FOR REMNA PANEL ---")
+        print("Please set the following variables in your panel's .env file:")
+        print("\n1. Set the webhook URL:")
+        print(f"   WEBHOOK_URL=http://<YOUR_BOT_SERVER_IP>:5556/webhook")
+        print("\n2. Copy this exact secret key (64 characters):")
+        print(f"   WEBHOOK_SECRET={webhook_secret}")
+        print("\n3. Make sure WEBHOOK_ENABLED is set to true:")
+        print("   WEBHOOK_ENABLED=true")
+        print("\n4. Finally, restart your panel to apply the changes.")
+        print("------------------------------------")
+        print("NOTE: Ensure port 5556 is open in your bot server's firewall.")
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python config_manager.py [list|add_local|add_remote|remove] [args...]", file=sys.stderr)
+        print("Usage: python config_manager.py [list|add_local|add_remote|remove|toggle_notifications] [args...]", file=sys.stderr)
         sys.exit(1)
 
     command = sys.argv[1]
@@ -98,6 +134,8 @@ if __name__ == "__main__":
         add_remote_node(sys.argv[2], sys.argv[3], sys.argv[4])
     elif command == 'remove' and len(sys.argv) == 3:
         remove_node(sys.argv[2])
+    elif command == 'toggle_notifications':
+        toggle_notifications()
     else:
         print(f"Invalid command or arguments for '{command}'.", file=sys.stderr)
         sys.exit(1)
