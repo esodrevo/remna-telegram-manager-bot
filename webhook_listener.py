@@ -1,4 +1,4 @@
-# /opt/remna_bot/webhook_listener.py
+# /opt/remna_bot/webhook_listener.py (نسخه نهایی با فرمول صحیح امضا)
 
 from flask import Flask, request, jsonify
 import os
@@ -21,23 +21,35 @@ app = Flask(__name__)
 GB = 1024 * 1024 * 1024
 
 def verify_signature(req):
+    """
+    امضای ارسال شده در هدر را با امضای ساخته شده از بدنه درخواست مقایسه می‌کند.
+    """
     secret = getattr(config, 'WEBHOOK_SECRET', '').encode('utf-8')
     if not secret:
         print("Warning: WEBHOOK_SECRET is not set. Skipping verification.")
         return True
 
     signature_header = req.headers.get('x-remnawave-signature')
-    timestamp_header = req.headers.get('x-remnawave-timestamp')
-    if not signature_header or not timestamp_header:
+    if not signature_header:
+        print("Webhook security check failed: Signature header missing.")
         return False
 
+    # --- FINAL FIX: Signature is calculated ONLY based on the request body ---
     body = req.get_data()
-    message = timestamp_header.encode('utf-8') + b'.' + body
+    message = body
     
     expected_signature = hmac.new(secret, message, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected_signature, signature_header)
+    
+    if not hmac.compare_digest(expected_signature, signature_header):
+        print(f"Webhook security check failed: Invalid signature. Expected {expected_signature}, but got {signature_header}")
+        return False
+        
+    return True
 
 def handle_user_modified(user_data):
+    """
+    رویداد user.modified را پردازش کرده و هشدارهای لازم را ارسال می‌کند.
+    """
     username = user_data.get('username')
     if not username:
         return
@@ -69,7 +81,6 @@ def handle_webhook():
         return jsonify({"status": "ok", "message": "Notifications are disabled."}), 200
 
     if not verify_signature(request):
-        print("Webhook security check failed: Invalid signature.")
         return jsonify({"error": "Unauthorized"}), 401
 
     payload = request.json
