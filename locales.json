@@ -73,7 +73,8 @@
     "notif_admin_limit_changed": "📊 حجم کاربر {username} توسط شما به <b>{limit}</b> گیگابایت تغییر کرد.",
     "notif_admin_expiry_changed": "🗓 اعتبار کاربر {username} توسط شما برای <b>{days}</b> روز دیگر تمدید شد.",
     "notif_detail_limit_changed": "📊 حجم کاربر {username} از <b>{old_limit}</b> به <b>{new_limit}</b> تغییر کرد.",
-    "notif_detail_expiry_changed": "🗓 تاریخ انقضای کاربر {username} از <b>{old_date}</b> به <b>{new_date}</b> تغییر کرد."
+    "notif_detail_expiry_changed": "🗓 تاریخ انقضای کاربر {username} از <b>{old_date}</b> به <b>{new_date}</b> تغییر کرد.",
+    "notif_bandwidth_threshold_reached": "⚠️ هشدار: کاربر {username} به آستانه مصرف حجم <b>{threshold}%</b> رسیده است.\n(مصرف: {usage} از {limit})"
   },
   "en": {
     "change_language_btn": "🌐 Change Language",
@@ -149,7 +150,8 @@
     "notif_admin_limit_changed": "📊 User {username}'s traffic limit was changed to <b>{limit}</b> GB by you.",
     "notif_admin_expiry_changed": "🗓 User {username}'s subscription was extended for <b>{days}</b> days by you.",
     "notif_detail_limit_changed": "📊 User {username}'s traffic limit changed from <b>{old_limit}</b> to <b>{new_limit}</b>.",
-    "notif_detail_expiry_changed": "🗓 User {username}'s expiry date changed from <b>{old_date}</b> to <b>{new_date}</b>."
+    "notif_detail_expiry_changed": "🗓 User {username}'s expiry date changed from <b>{old_date}</b> to <b>{new_date}</b>.",
+    "notif_bandwidth_threshold_reached": "⚠️ Warning: User {username} has reached the <b>{threshold}%</b> bandwidth usage threshold.\n(Usage: {usage} of {limit})"
   },
   "ru": {
     "change_language_btn": "🌐 Сменить язык",
@@ -225,6 +227,7 @@
     "notif_admin_limit_changed": "📊 Лимит трафика пользователя {username} был изменен вами на <b>{limit}</b> ГБ.",
     "notif_admin_expiry_changed": "🗓 Срок подписки пользователя {username} был продлен вами на <b>{days}</b> дней.",
     "notif_detail_limit_changed": "📊 Лимит трафика пользователя {username} изменен с <b>{old_limit}</b> на <b>{new_limit}</b>.",
-    "notif_detail_expiry_changed": "🗓 Дата окончания подписки пользователя {username} изменена с <b>{old_date}</b> на <b>{new_date}</b>."
+    "notif_detail_expiry_changed": "🗓 Дата окончания подписки пользователя {username} изменена с <b>{old_date}</b> на <b>{new_date}</b>.",
+    "notif_bandwidth_threshold_reached": "⚠️ Внимание: Пользователь {username} достиг порога использования трафика в <b>{threshold}%</b>.\n(Использовано: {usage} из {limit})"
   }
 }
