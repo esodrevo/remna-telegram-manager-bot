@@ -1,6 +1,6 @@
 # bot.py
 
-import logging, requests, json, subprocess, html, io
+import logging, requests, json, subprocess, html, io, asyncio
 from urllib.parse import urlparse
 from datetime import datetime, timezone, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, InputMediaPhoto
