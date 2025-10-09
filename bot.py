@@ -47,8 +47,9 @@ def is_admin(update: Update) -> bool:
     return update.effective_user.id == config.ADMIN_USER_ID
 
 def format_bytes(byte_count):
-    if byte_count is None or byte_count <= 0: return "0 GB"
+    if byte_count is None or int(byte_count) <= 0: return "0 GB"
     power=1024; n=0; labels={0:' B',1:' KB',2:' MB',3:' GB'}
+	byte_count = int(byte_count)
     while byte_count >= power and n < 3: byte_count /= power; n += 1
     return f"{byte_count:.2f}{labels[n]}"
 
@@ -90,7 +91,7 @@ def generate_qr_code(data: str):
 
 def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE):
     safe_username = html.escape(user_data.get('username') or 'N/A'); safe_client_app = html.escape(user_data.get('subLastUserAgent') or t('unknown', context)); safe_sub_url = html.escape(user_data.get('subscriptionUrl') or t('not_found', context))
-    status = t('status_active', context) if user_data.get('status') == 'ACTIVE' else t('status_inactive', context); data_limit = user_data.get('trafficLimitBytes', 0); data_usage = user_data.get('usedTrafficBytes', 0); remaining_data = data_limit - data_usage if data_limit > 0 else 0; expire_dt = parse_iso_date(user_data.get('expireAt')); remaining_days, expire_date_fa = (t('unlimited', context), t('unlimited', context))
+    status = t('status_active', context) if user_data.get('status') == 'ACTIVE' else t('status_inactive', context); data_limit = user_data.get('trafficLimitBytes', 0); data_usage = user_data.get('usedTrafficBytes', 0); remaining_data = int(data_limit) - int(data_usage) if int(data_limit) > 0 else 0; expire_dt = parse_iso_date(user_data.get('expireAt')); remaining_days, expire_date_fa = (t('unlimited', context), t('unlimited', context))
     if expire_dt:
         expire_date_fa = expire_dt.strftime("%Y/%m/%d"); time_diff = expire_dt - datetime.now(timezone.utc)
         if time_diff.total_seconds() > 0:
@@ -235,12 +236,16 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await query.answer(text=f"API Error: {error}", show_alert=True)
             return USER_MENU
         else:
-            if getattr(config, 'NOTIFICATIONS_ENABLED', False):
-                username = context.user_data.get('username')
-                await notifier.admin_user_status_changed(username, action_str)
+			# --- CHANGE: Direct notification call removed ---
+            # if getattr(config, 'NOTIFICATIONS_ENABLED', False):
+            #     username = context.user_data.get('username')
+            #     await notifier.admin_user_status_changed(username, action_str)
             
             success_text = t('user_enabled_success', context) if action_str == 'enable' else t('user_disabled_success', context)
             await query.answer(text=success_text, show_alert=False)
+			
+            # The webhook will trigger the notification. We just wait a moment for the card to refresh.
+            await asyncio.sleep(1)
             await query.message.delete()
             return await show_user_card(update, context)
             
@@ -290,13 +295,16 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if error: 
         await context.bot.send_message(chat_id=update.effective_chat.id, text=t('update_failed', context, error=error))
     else:
-        if getattr(config, 'NOTIFICATIONS_ENABLED', False):
-            username = context.user_data.get('username')
-            if editing_action == 'limit':
-                await notifier.admin_user_limit_changed(username, new_limit_gb)
-            elif editing_action == 'expire':
-                await notifier.admin_user_expiry_changed(username, days)
+        # --- CHANGE: Direct notification calls removed ---
+        # if getattr(config, 'NOTIFICATIONS_ENABLED', False):
+        #     username = context.user_data.get('username')
+        #     if editing_action == 'limit':
+        #         await notifier.admin_user_limit_changed(username, new_limit_gb)
+        #     elif editing_action == 'expire':
+        #         await notifier.admin_user_expiry_changed(username, days)
+        pass # Notifications will now be handled by the webhook triggered by this API call
         
+	await asyncio.sleep(1)					  
     return await show_user_card(update, context)
 
 async def logs_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
