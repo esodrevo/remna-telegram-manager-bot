@@ -1,4 +1,4 @@
-# /opt/remna_bot/webhook_listener.py (نسخه نهایی با فرمول صحیح امضا)
+# /opt/remna_bot/webhook_listener.py
 
 from flask import Flask, request, jsonify
 import os
@@ -34,7 +34,6 @@ def verify_signature(req):
         print("Webhook security check failed: Signature header missing.")
         return False
 
-    # --- FINAL FIX: Signature is calculated ONLY based on the request body ---
     body = req.get_data()
     message = body
     
@@ -46,9 +45,9 @@ def verify_signature(req):
         
     return True
 
-def handle_user_modified(user_data):
+def handle_conditional_checks(user_data):
     """
-    رویداد user.modified را پردازش کرده و هشدارهای لازم را ارسال می‌کند.
+    فقط بررسی‌های شرطی (حجم کم و زمان کم) را انجام می‌دهد.
     """
     username = user_data.get('username')
     if not username:
@@ -98,7 +97,9 @@ def handle_webhook():
     elif event == 'user.disabled':
         asyncio.run(notifier.user_disabled(username))
     elif event == 'user.modified':
-        handle_user_modified(user_data)
+        # --- FIX: Send a generic notification first, then do conditional checks ---
+        asyncio.run(notifier.user_modified(username))
+        handle_conditional_checks(user_data)
     elif event == 'user.traffic_limit_reached':
         asyncio.run(notifier.limit_reached(username))
     elif event == 'user.expired':
