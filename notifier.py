@@ -27,18 +27,17 @@ def get_current_lang() -> str:
     try:
         settings_path = os.path.join(os.path.dirname(__file__), 'settings.json')
         with open(settings_path, 'r', encoding='utf-8') as f:
-            return json.load(f).get('language', 'fa') # زبان پیش‌فرض فارسی
+            return json.load(f).get('language', 'fa')
     except (FileNotFoundError, json.JSONDecodeError):
         return 'fa'
 
 def get_message(key: str, **kwargs) -> str:
     """یک پیام فرمت‌شده بر اساس زبان فعلی ربات برمی‌گرداند."""
     lang = get_current_lang()
-    # در صورت عدم وجود ترجمه در زبان انتخاب شده، به انگلیسی بازمی‌گردد
     return LANGUAGES.get(lang, LANGUAGES.get('en', {})).get(key, f"Missing translation for {key}").format(**kwargs)
 
 async def send_notification(message_text: str):
-    """یک پیام به ادمین ارسال می‌کند."""
+    """تابع اصلی و ناهمزمان برای ارسال پیام به ادمین."""
     if not getattr(config, 'NOTIFICATIONS_ENABLED', False):
         return
 
@@ -54,47 +53,45 @@ async def send_notification(message_text: str):
     except Exception as e:
         print(f"Error sending Telegram notification: {e}")
 
-# --- توابع برای رویدادهای مختلف (فراخوانی از webhook_listener) ---
+# --- توابع async برای فراخوانی توسط bot.py و webhook_listener.py ---
 
-def user_enabled(username: str):
+async def user_enabled(username: str):
     msg = get_message('notif_user_enabled', username=f"<code>{username}</code>")
-    asyncio.run(send_notification(msg))
+    await send_notification(msg)
 
-def user_disabled(username: str):
+async def user_disabled(username: str):
     msg = get_message('notif_user_disabled', username=f"<code>{username}</code>")
-    asyncio.run(send_notification(msg))
+    await send_notification(msg)
 
-def limit_reached(username: str):
+async def limit_reached(username: str):
     msg = get_message('notif_limit_reached', username=f"<code>{username}</code>")
-    asyncio.run(send_notification(msg))
+    await send_notification(msg)
 
-def subscription_expired(username: str):
+async def subscription_expired(username: str):
     msg = get_message('notif_subscription_expired', username=f"<code>{username}</code>")
-    asyncio.run(send_notification(msg))
+    await send_notification(msg)
 
-def low_traffic_warning(username: str):
+async def low_traffic_warning(username: str):
     msg = get_message('notif_low_traffic_warning', username=f"<code>{username}</code>")
-    asyncio.run(send_notification(msg))
+    await send_notification(msg)
 
-def near_expiry_warning(username: str):
+async def near_expiry_warning(username: str):
     msg = get_message('notif_near_expiry_warning', username=f"<code>{username}</code>")
-    asyncio.run(send_notification(msg))
+    await send_notification(msg)
 
-# --- توابع برای رویدادهای مختلف (فراخوانی مستقیم از bot.py) ---
-
-def admin_user_status_changed(username: str, status_en: str):
+async def admin_user_status_changed(username: str, status_en: str):
     lang = get_current_lang()
     if lang == 'fa':
         status = "فعال ✅" if status_en == 'enable' else "غیرفعال 🚫"
     else:
-        status = status_en # for en and ru
+        status = status_en
     msg = get_message('notif_admin_status_changed', username=f"<code>{username}</code>", status=status)
-    asyncio.run(send_notification(msg))
+    await send_notification(msg)
 
-def admin_user_limit_changed(username: str, new_limit_gb: float):
+async def admin_user_limit_changed(username: str, new_limit_gb: float):
     msg = get_message('notif_admin_limit_changed', username=f"<code>{username}</code>", limit=new_limit_gb)
-    asyncio.run(send_notification(msg))
+    await send_notification(msg)
 
-def admin_user_expiry_changed(username: str, days: int):
+async def admin_user_expiry_changed(username: str, days: int):
     msg = get_message('notif_admin_expiry_changed', username=f"<code>{username}</code>", days=days)
-    asyncio.run(send_notification(msg))
+    await send_notification(msg)
