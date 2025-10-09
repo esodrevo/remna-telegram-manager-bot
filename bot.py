@@ -13,6 +13,7 @@ from telegram.error import BadRequest
 import qrcode
 
 import config
+import notifier
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -234,6 +235,10 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await query.answer(text=f"API Error: {error}", show_alert=True)
             return USER_MENU
         else:
+            if getattr(config, 'NOTIFICATIONS_ENABLED', False):
+                username = context.user_data.get('username')
+                notifier.admin_user_status_changed(username, action_str)
+            
             success_text = t('user_enabled_success', context) if action_str == 'enable' else t('user_disabled_success', context)
             await query.answer(text=success_text, show_alert=False)
             await query.message.delete()
@@ -266,16 +271,31 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         except BadRequest:
             pass
     if not context.user_data.get('user_uuid'): return await start(update, context)
+    
     payload = {}
+    editing_action = context.user_data.get('editing')
+    new_limit_gb, days = 0, 0
     try:
-        if context.user_data.get('editing') == 'limit':
-            new_limit_gb = float(update.message.text); payload = {"uuid": context.user_data.get('user_uuid'), "trafficLimitBytes": int(new_limit_gb * 1024**3)}
-        elif context.user_data.get('editing') == 'expire':
-            days = int(update.message.text); payload = {"uuid": context.user_data.get('user_uuid'), "expireAt": (datetime.now(timezone.utc) + timedelta(days=days)).isoformat().replace('+00:00', 'Z')}
+        if editing_action == 'limit':
+            new_limit_gb = float(update.message.text)
+            payload = {"uuid": context.user_data.get('user_uuid'), "trafficLimitBytes": int(new_limit_gb * 1024**3)}
+        elif editing_action == 'expire':
+            days = int(update.message.text)
+            payload = {"uuid": context.user_data.get('user_uuid'), "expireAt": (datetime.now(timezone.utc) + timedelta(days=days)).isoformat().replace('+00:00', 'Z')}
     except (ValueError, TypeError):
         await context.bot.send_message(chat_id=update.effective_chat.id, text=t('invalid_number', context)); return await show_user_card(update, context)
+    
     _, error = api_request('PATCH', '/api/users', payload=payload)
-    if error: await context.bot.send_message(chat_id=update.effective_chat.id, text=t('update_failed', context, error=error))
+    if error: 
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=t('update_failed', context, error=error))
+    else:
+        if getattr(config, 'NOTIFICATIONS_ENABLED', False):
+            username = context.user_data.get('username')
+            if editing_action == 'limit':
+                notifier.admin_user_limit_changed(username, new_limit_gb)
+            elif editing_action == 'expire':
+                notifier.admin_user_expiry_changed(username, days)
+        
     return await show_user_card(update, context)
 
 async def logs_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
