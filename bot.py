@@ -237,12 +237,13 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         else:
             if getattr(config, 'NOTIFICATIONS_ENABLED', False):
                 username = context.user_data.get('username')
-                notifier.admin_user_status_changed(username, action_str)
+                await notifier.admin_user_status_changed(username, action_str)
             
             success_text = t('user_enabled_success', context) if action_str == 'enable' else t('user_disabled_success', context)
             await query.answer(text=success_text, show_alert=False)
             await query.message.delete()
             return await show_user_card(update, context)
+            
     if action == 'show_qr':
         qr_code_bytes = generate_qr_code(context.user_data.get('sub_url'))
         if qr_code_bytes:
@@ -292,9 +293,9 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         if getattr(config, 'NOTIFICATIONS_ENABLED', False):
             username = context.user_data.get('username')
             if editing_action == 'limit':
-                notifier.admin_user_limit_changed(username, new_limit_gb)
+                await notifier.admin_user_limit_changed(username, new_limit_gb)
             elif editing_action == 'expire':
-                notifier.admin_user_expiry_changed(username, days)
+                await notifier.admin_user_expiry_changed(username, days)
         
     return await show_user_card(update, context)
 
