@@ -95,7 +95,8 @@ EOF
     curl -sL "${RAW_GITHUB_URL}/config_manager.py" -o "$INSTALL_DIR/config_manager.py"
     curl -sL "${RAW_GITHUB_URL}/notifier.py" -o "$INSTALL_DIR/notifier.py"
     curl -sL "${RAW_GITHUB_URL}/webhook_listener.py" -o "$INSTALL_DIR/webhook_listener.py"
-
+    curl -sL "${RAW_GITHUB_URL}/cache_manager.py" -o "$INSTALL_DIR/cache_manager.py"
+    
     cat << 'EOF' > "$INSTALL_DIR/settings.json"
 {"language": "fa"}
 EOF
@@ -164,6 +165,15 @@ restart_bot() {
         systemctl restart "$BOT_SERVICE_NAME"
     fi
     echo -e "${GREEN}Operation completed.${NC}"
+    pause
+}
+
+populate_cache_menu() {
+    check_root
+    echo -e "${YELLOW}Populating user cache from Remna panel...${NC}"
+    echo "This may take a moment depending on the number of users."
+    "$PYTHON_VENV_EXEC" "$INSTALL_DIR/cache_manager.py" populate
+    echo -e "${GREEN}Cache population process finished.${NC}"
     pause
 }
 
@@ -414,17 +424,19 @@ show_menu() {
         echo "  3) Add Nodes"
         echo "  4) Remove Nodes"
         echo "  5) Enable/Disable Notifications"
-        echo "  6) Uninstall Bot"
+        echo "  6) Populate User Cache (Run once after install)"
+        echo "  7) Uninstall Bot"
         echo "  0) Exit"
         echo "----------------------------------------"
-        read -p "Enter your choice [1-6, 0]: " choice
+        read -p "Enter your choice [1-7, 0]: " choice
         case $choice in
             1) install_bot ;;
             2) restart_bot ;;
             3) add_node_menu ;;
             4) remove_node ;;
             5) toggle_notifications_menu ;;
-            6) uninstall_bot ;;
+            6) populate_cache_menu
+            7) uninstall_bot ;;
             0) break ;;
             *) echo -e "${RED}Invalid option. Please try again.${NC}"; pause ;;
         esac
