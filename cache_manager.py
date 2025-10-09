@@ -1,4 +1,4 @@
-# /opt/remna_bot/cache_manager.py
+# /opt/remna_bot/cache_manager.py (نسخه نهایی و اصلاح‌شده)
 
 import os
 import sys
@@ -20,9 +20,9 @@ GB = 1024 * 1024 * 1024
 
 # --- Helper Functions ---
 def format_bytes_to_gb(byte_count):
-    if byte_count is None or byte_count == 0:
+    if byte_count is None or int(byte_count) == 0:
         return "0 GB"
-    return f"{byte_count / GB:.2f} GB"
+    return f"{int(byte_count) / GB:.2f} GB"
 
 def format_iso_date(date_string):
     if not date_string:
@@ -34,7 +34,6 @@ def format_iso_date(date_string):
 
 # --- Cache Management ---
 def load_cache():
-    """حافظه پنهان را از فایل می‌خواند."""
     try:
         with open(CACHE_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -42,12 +41,10 @@ def load_cache():
         return {}
 
 def save_cache(cache_data):
-    """حافظه پنهان را در فایل ذخیره می‌کند."""
     with open(CACHE_FILE, 'w', encoding='utf-8') as f:
         json.dump(cache_data, f, indent=2, ensure_ascii=False)
 
 def update_user_in_cache(user_data):
-    """اطلاعات یک کاربر را در حافظه پنهان به‌روزرسانی یا اضافه می‌کند."""
     username = user_data.get('username')
     if not username:
         return
@@ -57,10 +54,6 @@ def update_user_in_cache(user_data):
     print(f"Cache updated for user: {username}")
 
 async def compare_and_notify(new_user_data):
-    """
-    اطلاعات جدید کاربر را با اطلاعات موجود در حافظه پنهان مقایسه کرده
-    و در صورت وجود تفاوت، نوتیفیکیشن دقیق ارسال می‌کند.
-    """
     username = new_user_data.get('username')
     if not username:
         return
@@ -68,13 +61,11 @@ async def compare_and_notify(new_user_data):
     cache = load_cache()
     old_user_data = cache.get(username)
 
-    # اگر کاربر در حافظه وجود نداشته باشد، فقط آن را اضافه می‌کنیم و خارج می‌شویم
     if not old_user_data:
         update_user_in_cache(new_user_data)
-        await notifier.user_modified(username) # ارسال نوتیفیکیشن عمومی برای کاربر جدید
+        await notifier.user_modified(username)
         return
 
-    # مقایسه فیلدهای مهم
     if old_user_data.get('status') != new_user_data.get('status'):
         if new_user_data.get('status') == 'ACTIVE':
             await notifier.user_enabled(username)
@@ -91,13 +82,9 @@ async def compare_and_notify(new_user_data):
         new_date = format_iso_date(new_user_data.get('expireAt'))
         await notifier.detail_expiry_changed(username, old_date, new_date)
     
-    # در نهایت، حافظه پنهان را با اطلاعات جدید به‌روز می‌کنیم
     update_user_in_cache(new_user_data)
 
 def populate_cache():
-    """
-    برای اولین بار، اطلاعات تمام کاربران را از پنل دریافت و حافظه را پر می‌کند.
-    """
     print("Attempting to populate user cache from panel API...")
     api_url = f"{config.PANEL_URL}/api/users"
     headers = {'Authorization': f'Bearer {config.PANEL_API_TOKEN}', 'Accept': 'application/json'}
@@ -105,10 +92,16 @@ def populate_cache():
     try:
         response = requests.get(api_url, headers=headers, timeout=30)
         response.raise_for_status()
-        users = response.json().get('response', [])
+        
+        response_json = response.json()
+        
+        # --- FIX: Correctly access the nested 'users' list ---
+        response_data = response_json.get('response', {})
+        users = response_data.get('users', [])
+        # ----------------------------------------------------
         
         if not users:
-            print("Warning: Received no users from the panel.")
+            print("Warning: Received no users from the panel. The 'users' list in the response was empty.")
             return
 
         cache_data = {user['username']: user for user in users if 'username' in user}
@@ -120,7 +113,6 @@ def populate_cache():
         print(f"Details: {e}")
 
 if __name__ == "__main__":
-    # این بخش برای فراخوانی از طریق خط فرمان (توسط installer.sh) است
     if len(sys.argv) > 1 and sys.argv[1] == 'populate':
         populate_cache()
     else:
