@@ -8,6 +8,7 @@ import hashlib
 import asyncio
 from datetime import datetime, timezone, timedelta
 
+# افزودن مسیر پروژه برای دسترسی به ماژول‌ها
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 try:
     import config
@@ -18,7 +19,6 @@ except ImportError as e:
     sys.exit(1)
 
 app = Flask(__name__)
-GB = 1024 * 1024 * 1024
 
 def verify_signature(req):
     """
@@ -40,39 +40,10 @@ def verify_signature(req):
     expected_signature = hmac.new(secret, message, hashlib.sha256).hexdigest()
     
     if not hmac.compare_digest(expected_signature, signature_header):
-        print(f"Webhook security check failed: Invalid signature. Expected {expected_signature}, but got {signature_header}")
+        print(f"Webhook security check failed: Invalid signature.")
         return False
         
     return True
-
-def handle_conditional_checks(user_data):
-    """
-    فقط بررسی‌های شرطی (حجم کم و زمان کم) را انجام می‌دهد.
-    """
-    username = user_data.get('username')
-    if not username:
-        return
-
-    used_bytes = int(user_data.get('usedTrafficBytes', 0))
-    limit_bytes = int(user_data.get('trafficLimitBytes', 0))
-
-    if limit_bytes > 0:
-        remaining_bytes = limit_bytes - used_bytes
-        if 0 < remaining_bytes < (2 * GB):
-            asyncio.run(notifier.low_traffic_warning(username))
-        elif remaining_bytes <= 0:
-            asyncio.run(notifier.limit_reached(username))
-
-    expire_at_str = user_data.get('expireAt')
-    if expire_at_str:
-        try:
-            expire_dt = datetime.fromisoformat(expire_at_str.replace('Z', '+00:00'))
-            now_utc = datetime.now(timezone.utc)
-            time_left = expire_dt - now_utc
-            if timedelta(seconds=0) < time_left < timedelta(hours=24):
-                asyncio.run(notifier.near_expiry_warning(username))
-        except (ValueError, TypeError) as e:
-            print(f"Could not parse expireAt date: {expire_at_str} | Error: {e}")
 
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
@@ -102,6 +73,13 @@ def handle_webhook():
     elif event == 'user.modified':
         asyncio.run(cache_manager.compare_and_notify(user_data))
         
+    elif event == 'user.bandwidth_usage_threshold_reached':
+        cache_manager.update_user_in_cache(user_data)
+        threshold = user_data.get('lastTriggeredThreshold')
+        usage = cache_manager.format_bytes_to_gb(user_data.get('usedTrafficBytes'))
+        limit = cache_manager.format_bytes_to_gb(user_data.get('trafficLimitBytes'))
+        asyncio.run(notifier.bandwidth_threshold_reached(username, threshold, usage, limit))
+    
     elif event == 'user.traffic_limit_reached':
         cache_manager.update_user_in_cache(user_data)
         asyncio.run(notifier.limit_reached(username))
