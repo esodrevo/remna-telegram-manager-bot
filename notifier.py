@@ -27,13 +27,14 @@ def get_current_lang() -> str:
     try:
         settings_path = os.path.join(os.path.dirname(__file__), 'settings.json')
         with open(settings_path, 'r', encoding='utf-8') as f:
-            return json.load(f).get('language', 'fa')
+            return json.load(f).get('language', 'fa') # زبان پیش‌فرض فارسی
     except (FileNotFoundError, json.JSONDecodeError):
         return 'fa'
 
 def get_message(key: str, **kwargs) -> str:
     """یک پیام فرمت‌شده بر اساس زبان فعلی ربات برمی‌گرداند."""
     lang = get_current_lang()
+    # در صورت عدم وجود ترجمه در زبان انتخاب شده، به انگلیسی بازمی‌گردد
     return LANGUAGES.get(lang, LANGUAGES.get('en', {})).get(key, f"Missing translation for {key}").format(**kwargs)
 
 async def send_notification(message_text: str):
@@ -61,6 +62,10 @@ async def user_enabled(username: str):
 
 async def user_disabled(username: str):
     msg = get_message('notif_user_disabled', username=f"<code>{username}</code>")
+    await send_notification(msg)
+
+async def user_modified(username: str):
+    msg = get_message('notif_user_modified', username=f"<code>{username}</code>")
     await send_notification(msg)
 
 async def limit_reached(username: str):
