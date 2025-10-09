@@ -8,11 +8,11 @@ import hashlib
 import asyncio
 from datetime import datetime, timezone, timedelta
 
-# افزودن مسیر پروژه برای دسترسی به ماژول‌ها
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 try:
     import config
     import notifier
+    import cache_manager
 except ImportError as e:
     print(f"Error importing modules: {e}")
     sys.exit(1)
@@ -92,18 +92,24 @@ def handle_webhook():
 
     print(f"Webhook received: Event '{event}' for user '{username}'")
 
-    if event == 'user.enabled':
-        asyncio.run(notifier.user_enabled(username))
-    elif event == 'user.disabled':
-        asyncio.run(notifier.user_disabled(username))
+    if event == 'user.enabled' or event == 'user.disabled':
+        cache_manager.update_user_in_cache(user_data)
+        if event == 'user.enabled':
+            asyncio.run(notifier.user_enabled(username))
+        else:
+            asyncio.run(notifier.user_disabled(username))
+
     elif event == 'user.modified':
-        # --- FIX: Send a generic notification first, then do conditional checks ---
-        asyncio.run(notifier.user_modified(username))
-        handle_conditional_checks(user_data)
+        asyncio.run(cache_manager.compare_and_notify(user_data))
+        
     elif event == 'user.traffic_limit_reached':
+        cache_manager.update_user_in_cache(user_data)
         asyncio.run(notifier.limit_reached(username))
+        
     elif event == 'user.expired':
+        cache_manager.update_user_in_cache(user_data)
         asyncio.run(notifier.subscription_expired(username))
+        
     else:
         print(f"Unknown or unhandled event type: {event}")
 
