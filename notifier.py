@@ -4,8 +4,10 @@ import asyncio
 import os
 import sys
 import json
+from datetime import datetime, timedelta
 from telegram import Bot
 
+# افزودن مسیر پروژه به sys.path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 try:
     import config
@@ -13,12 +15,40 @@ except ImportError:
     print("Error: config.py not found. Make sure this script is in /opt/remna_bot/")
     sys.exit(1)
 
+# بارگذاری تمام ترجمه‌ها از فایل
 try:
     with open(os.path.join(os.path.dirname(__file__), 'locales.json'), 'r', encoding='utf-8') as f:
         LANGUAGES = json.load(f)
 except Exception as e:
     print(f"Error loading locales.json: {e}")
     LANGUAGES = {}
+
+CACHE_SPAM_FILE = os.path.join(os.path.dirname(__file__), 'spam_cache.json')
+
+def can_send_conditional_notif(username: str, notif_type: str) -> bool:
+    """جلوگیری از ارسال مکرر هشدارهای دوره‌ای (مانند تاریخ انقضا)"""
+    try:
+        with open(CACHE_SPAM_FILE, 'r') as f:
+            cache = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        cache = {}
+
+    user_notifs = cache.get(username, {})
+    last_sent_str = user_notifs.get(notif_type)
+
+    # اگر در 23 ساعت گذشته هشداری برای این شرط ارسال شده، دوباره ارسال نکن
+    if last_sent_str:
+        last_sent_dt = datetime.fromisoformat(last_sent_str)
+        if datetime.now() < last_sent_dt + timedelta(hours=23):
+            print(f"Spam prevention: Skipping '{notif_type}' for '{username}'.")
+            return False
+
+    if username not in cache:
+        cache[username] = {}
+    cache[username][notif_type] = datetime.now().isoformat()
+    with open(CACHE_SPAM_FILE, 'w') as f:
+        json.dump(cache, f)
+    return True
 
 def get_current_lang() -> str:
     """زبان انتخاب شده در ربات را از فایل settings.json می‌خواند."""
@@ -51,6 +81,7 @@ async def send_notification(message_text: str):
     except Exception as e:
         print(f"Error sending Telegram notification: {e}")
 
+# --- توابع async برای فراخوانی ---
 
 async def user_enabled(username: str):
     msg = get_message('notif_user_enabled', username=f"<code>{username}</code>")
@@ -72,12 +103,13 @@ async def subscription_expired(username: str):
     msg = get_message('notif_subscription_expired', username=f"<code>{username}</code>")
     await send_notification(msg)
 
-async def low_traffic_warning(username: str):
-    msg = get_message('notif_low_traffic_warning', username=f"<code>{username}</code>")
-    await send_notification(msg)
-
 async def near_expiry_warning(username: str):
-    msg = get_message('notif_near_expiry_warning', username=f"<code>{username}</code>")
+    if can_send_conditional_notif(username, 'near_expiry'):
+        msg = get_message('notif_near_expiry_warning', username=f"<code>{username}</code>")
+        await send_notification(msg)
+
+async def bandwidth_threshold_reached(username: str, threshold: int, usage: str, limit: str):
+    msg = get_message('notif_bandwidth_threshold_reached', username=f"<code>{username}</code>", threshold=threshold, usage=usage, limit=limit)
     await send_notification(msg)
 
 async def detail_limit_changed(username: str, old_limit: str, new_limit: str):
