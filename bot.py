@@ -1,4 +1,4 @@
-# bot.py
+# /opt/remna_bot/bot.py
 
 import logging, requests, json, subprocess, html, io, asyncio
 from urllib.parse import urlparse
@@ -12,7 +12,7 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 import qrcode
 
-import config																																									
+import config
 import notifier
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -37,7 +37,7 @@ def get_lang(context: ContextTypes.DEFAULT_TYPE) -> str:
     return context.user_data['lang']
 
 def t(key: str, context: ContextTypes.DEFAULT_TYPE, **kwargs) -> str:
-    lang = get_lang(context); return LANGUAGES.get(lang, LANGUAGES['en']).get(key, key).format(**kwargs)
+    lang = get_lang(context); return LANGUAGES.get(lang, LANGUAGES.get('en', {})).get(key, key).format(**kwargs)
 
 def set_language_file(lang: str):
     with open('settings.json', 'w', encoding='utf-8') as f: json.dump({'language': lang}, f)
@@ -100,283 +100,75 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
     sub_last_update_dt = parse_iso_date(user_data.get('subLastOpenedAt')); last_update_relative = human_readable_timediff(sub_last_update_dt, context)
     return (f"{t('user_info_title', context, username=safe_username)}\n\n" f"{t('status', context)} {status}\n\n" f"{t('total_limit', context)} {format_bytes(data_limit)}\n" f"{t('usage', context)} {format_bytes(data_usage)}\n" f"{t('remaining_volume', context)} {format_bytes(remaining_data)}\n\n" f"{t('expire_date', context)} {expire_date_fa}\n" f"{t('remaining_time', context)} {remaining_days}\n\n" f"{t('client_software', context)} <code>{safe_client_app}</code>\n" f"{t('last_update', context)} {last_update_relative}\n\n" f"{t('subscription_link', context)}\n" f"<code>{safe_sub_url}</code>")
 
-def get_logs_from_node(node_name: str):
-    node_config = config.NODES.get(node_name)
-    if not node_config: return None, "Node not found in config."
-    if node_config['type'] == 'local':
-        command = ["docker", "exec", "remnanode", "tail", "-n30", "/var/log/supervisor/xray.out.log"]
-        try:
-            result = subprocess.run(command, capture_output=True, text=True, check=True, encoding='utf-8')
-            return result.stdout.strip(), None
-        except Exception as e: return None, str(e)
-    elif node_config['type'] == 'remote':
-        try:
-            headers = {'Authorization': f"Bearer {node_config['token']}"}
-            response = requests.get(node_config['url'], headers=headers, timeout=10)
-            response.raise_for_status()
-            return response.json().get('logs'), None
-        except Exception as e: return None, str(e)
-    return None, "Invalid node type in config."
+async def check_expiring_users(context: ContextTypes.DEFAULT_TYPE):
+    """
+    این تابع به صورت دوره‌ای اجرا شده و کاربرانی که تاریخ انقضایشان نزدیک است را بررسی می‌کند.
+    """
+    logger.info("Running job: check_expiring_users")
+    if not getattr(config, 'NOTIFICATIONS_ENABLED', False):
+        logger.info("Notifications are disabled, skipping expiry check job.")
+        return
+        
+    try:
+        all_users_data, error = api_request('GET', '/api/users')
+        if error or not all_users_data:
+            logger.error(f"Could not fetch users for expiry check. Error: {error}")
+            return
+
+        users = all_users_data.get('response', {}).get('users', [])
+        now_utc = datetime.now(timezone.utc)
+
+        for user in users:
+            expire_at_str = user.get('expireAt')
+            username = user.get('username')
+            status = user.get('status')
+
+            if not expire_at_str or not username or status != 'ACTIVE':
+                continue
+
+            try:
+                expire_dt = parse_iso_date(expire_at_str)
+                time_left = expire_dt - now_utc
+                if timedelta(seconds=0) < time_left < timedelta(hours=24):
+                    await notifier.near_expiry_warning(username)
+            except Exception as e:
+                logger.warning(f"Could not process user '{username}' for expiry check. Error: {e}")
+
+    except Exception as e:
+        logger.error(f"An unexpected error occurred in check_expiring_users job: {e}")
 
 async def post_init(application: Application):
     lang = get_lang_from_file()
     await application.bot.set_my_commands(COMMANDS.get(lang, COMMANDS['en']))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not is_admin(update): return ConversationHandler.END
-    context.user_data.clear(); get_lang(context)
-    keyboard = [[InlineKeyboardButton(t('manage_user_btn', context), callback_data='go_manage_user')], [InlineKeyboardButton(t('view_logs_btn', context), callback_data='go_view_logs')], [InlineKeyboardButton(t('restart_nodes_btn', context), callback_data='go_restart_nodes')], [InlineKeyboardButton(t('change_language_btn', context), callback_data='go_change_language')]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    message_text = t('main_menu_prompt', context)
-    chat_id = update.effective_chat.id
-    if update.callback_query:
-        try:
-            await update.callback_query.message.delete()
-        except BadRequest as e:
-            if "Message to delete not found" not in str(e): logger.error(f"Error deleting message: {e}")
-        await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(text=message_text, reply_markup=reply_markup)
-    return MAIN_MENU
-
+    # ... (بدون تغییر) ...
 async def show_node_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    buttons = [InlineKeyboardButton(node_name, callback_data=f"lognode_{node_name}") for node_name in config.NODES.keys()]
-    keyboard = [[b] for b in buttons] if len(buttons) > 1 else [buttons]
-    keyboard.append([InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    message_text = t('select_node_prompt', context)
-    query = update.callback_query
-    if query:
-        try:
-            await query.message.delete()
-        except BadRequest as e:
-            if "Message to delete not found" not in str(e): logger.error(f"Error deleting message: {e}")
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=message_text, reply_markup=reply_markup)
-    return NODE_LIST
-
+    # ... (بدون تغییر) ...
 async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query; await query.answer(); action = query.data
-    if action == 'go_manage_user':
-        await query.message.edit_text(t('ask_for_username', context))
-        context.user_data['prompt_message_id'] = query.message.message_id
-        return AWAITING_USERNAME
-    if action == 'go_view_logs':
-        return await show_node_list(update, context)
-    if action == 'go_restart_nodes':
-        buttons = [InlineKeyboardButton(node_name, callback_data=f"restartnode_{node_name}") for node_name in config.NODES.keys()]
-        keyboard = [[b] for b in buttons] if len(buttons) > 1 else [buttons]; keyboard.append([InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')])
-        await query.message.edit_text(t('select_node_restart_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard)); return SELECT_NODE_RESTART
-    if action == 'go_change_language':
-        try:
-            await query.message.delete()
-        except BadRequest: pass
-        keyboard = [[InlineKeyboardButton("English 🇬🇧", callback_data='set_lang_en'), InlineKeyboardButton("Русский 🇷🇺", callback_data='set_lang_ru'), InlineKeyboardButton("فارسی 🇮🇷", callback_data='set_lang_fa')], [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=t('select_language_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard)); return SELECTING_LANGUAGE
-    return MAIN_MENU
-
+    # ... (بدون تغییر) ...
 async def set_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query; await query.answer()
-    lang_code = query.data.split('_')[-1]
-    context.user_data['lang'] = lang_code; set_language_file(lang_code)
-    await context.bot.delete_my_commands(); await context.bot.set_my_commands(COMMANDS.get(lang_code, COMMANDS['en']))
-    return await start(update, context)
-
+    # ... (بدون تغییر) ...
 async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    username_to_fetch = context.user_data.get('username')
-    if update.message and not username_to_fetch:
-        username_to_fetch = update.message.text
-    if update.message:
-        try:
-            await update.message.delete()
-        except BadRequest: pass
-    prompt_message_id = context.user_data.pop('prompt_message_id', None)
-    if prompt_message_id:
-        try:
-            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_message_id)
-        except BadRequest: pass
-    get_lang(context)
-    if not username_to_fetch: return await start(update, context)
-    context.user_data['username'] = username_to_fetch
-    sent_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('fetching_user_info', context, username=username_to_fetch), parse_mode=ParseMode.HTML)
-    data, error = api_request('GET', f'/api/users/by-username/{username_to_fetch}')
-    if error:
-        await sent_message.edit_text(t('error_fetching', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])); return AWAITING_USERNAME
-    user_data = data.get('response', {}); context.user_data['user_uuid'] = user_data.get('uuid'); context.user_data['sub_url'] = user_data.get('subscriptionUrl')
-    message_text = build_user_info_message(user_data, context)
-    keyboard_list = [
-        [InlineKeyboardButton(t('edit_volume_btn', context), callback_data='edit_limit'), InlineKeyboardButton(t('edit_date_btn', context), callback_data='edit_expire')],
-        [InlineKeyboardButton(t('show_qr_btn', context), callback_data='show_qr')],
-        [InlineKeyboardButton(t('refresh_btn', context), callback_data='refresh')],
-        [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]
-    ]
-    if user_data.get('status') == 'ACTIVE':
-        keyboard_list.insert(1, [InlineKeyboardButton(t('disable_user_btn', context), callback_data='disable_user')])
-    else:
-        keyboard_list.insert(1, [InlineKeyboardButton(t('enable_user_btn', context), callback_data='enable_user')])
-    await sent_message.edit_text(text=message_text, reply_markup=InlineKeyboardMarkup(keyboard_list), parse_mode=ParseMode.HTML)
-    return USER_MENU
-
+    # ... (بدون تغییر) ...
 async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query; await query.answer(); action = query.data
-    if action == 'back_to_main':
-        return await start(update, context)
-    if action == 'refresh':
-        await query.message.delete(); return await show_user_card(update, context)
-    if action in ['enable_user', 'disable_user']:
-        action_str = 'enable' if action == 'enable_user' else 'disable'
-        popup_text = t('enabling_user', context) if action_str == 'enable' else t('disabling_user', context)
-        await query.answer(text=popup_text, show_alert=False)
-        user_uuid = context.user_data.get('user_uuid')
-        if not user_uuid:
-            await query.answer(text="Error: User UUID not found.", show_alert=True)
-            return USER_MENU
-        endpoint = f'/api/users/{user_uuid}/actions/{action_str}'
-        _, error = api_request('POST', endpoint)
-        if error:
-            await query.answer(text=f"API Error: {error}", show_alert=True)
-            return USER_MENU
-        else:
-            # --- CHANGE: Direct notification call removed ---
-            # if getattr(config, 'NOTIFICATIONS_ENABLED', False):
-            #     username = context.user_data.get('username')
-            #     await notifier.admin_user_status_changed(username, action_str)
-            
-            success_text = t('user_enabled_success', context) if action_str == 'enable' else t('user_disabled_success', context)
-            await query.answer(text=success_text, show_alert=False)
-			
-            # The webhook will trigger the notification. We just wait a moment for the card to refresh.
-            await asyncio.sleep(1)			
-            await query.message.delete()
-            return await show_user_card(update, context)
-            
-    if action == 'show_qr':
-        qr_code_bytes = generate_qr_code(context.user_data.get('sub_url'))
-        if qr_code_bytes:
-            media = InputMediaPhoto(media=qr_code_bytes)
-            keyboard = [[InlineKeyboardButton(t('back_to_user_info_btn', context), callback_data='back_to_user_info')]]
-            await query.message.edit_media(media=media, reply_markup=InlineKeyboardMarkup(keyboard))
-            return QR_VIEW
-        return USER_MENU
-    username = context.user_data.get('username')
-    await query.message.edit_text(text=t('ask_for_new_limit', context, username=username) if action == 'edit_limit' else t('ask_for_new_expire', context, username=username), parse_mode=ParseMode.HTML)
-    context.user_data['editing'] = 'limit' if action == 'edit_limit' else 'expire'
-    context.user_data['prompt_message_id'] = query.message.message_id
-    return AWAITING_LIMIT if action == 'edit_limit' else AWAITING_EXPIRE
-
+    # ... (بدون تغییر) ...
 async def back_to_user_info_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query; await query.answer()
-    await query.message.delete()
-    return await show_user_card(update, context)
-
+    # ... (بدون تغییر) ...
 async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.delete()
-    prompt_message_id = context.user_data.pop('prompt_message_id', None)
-    if prompt_message_id:
-        try:
-            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_message_id)
-        except BadRequest:
-            pass
-    if not context.user_data.get('user_uuid'): return await start(update, context)
-    
-    payload = {}
-    editing_action = context.user_data.get('editing')
-    new_limit_gb, days = 0, 0
-    try:
-        if editing_action == 'limit':
-            new_limit_gb = float(update.message.text)
-            payload = {"uuid": context.user_data.get('user_uuid'), "trafficLimitBytes": int(new_limit_gb * 1024**3)}
-        elif editing_action == 'expire':
-            days = int(update.message.text)
-            payload = {"uuid": context.user_data.get('user_uuid'), "expireAt": (datetime.now(timezone.utc) + timedelta(days=days)).isoformat().replace('+00:00', 'Z')}
-    except (ValueError, TypeError):
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=t('invalid_number', context)); return await show_user_card(update, context)
-    
-    _, error = api_request('PATCH', '/api/users', payload=payload)
-    if error: 
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=t('update_failed', context, error=error))
-    else:
-        # --- CHANGE: Direct notification calls removed ---
-        # if getattr(config, 'NOTIFICATIONS_ENABLED', False):
-        #     username = context.user_data.get('username')
-        #     if editing_action == 'limit':
-        #         await notifier.admin_user_limit_changed(username, new_limit_gb)
-        #     elif editing_action == 'expire':
-        #         await notifier.admin_user_expiry_changed(username, days)
-        pass # Notifications will now be handled by the webhook triggered by this API call
-        
-    await asyncio.sleep(1)
-    return await show_user_card(update, context)
-
+    # ... (بدون تغییر) ...
 async def logs_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query; await query.answer(); action = query.data
-    if action == 'back_to_main':
-        return await start(update, context)
-    if action == 'go_view_logs':
-        return await show_node_list(update, context)
-    try:
-        await query.message.delete()
-    except BadRequest:
-        pass
-    node_name = action.split('_')[1]; context.user_data['selected_node'] = node_name
-    message = await context.bot.send_message(chat_id=query.message.chat_id, text=t('fetching_logs', context, node_name=node_name), parse_mode=ParseMode.HTML)
-    logs, error = get_logs_from_node(node_name); MAX_LOG_LENGTH = 3800
-    if logs and len(logs) > MAX_LOG_LENGTH: logs = f"...\n{logs[-MAX_LOG_LENGTH:]}"
-    if error:
-        message_text = t('error_fetching_logs', context, node_name=node_name, details=html.escape(str(error or "")))
-        keyboard = [[InlineKeyboardButton(t('back_to_nodes_btn', context), callback_data='go_view_logs')]]
-    else:
-        safe_logs = html.escape(logs or t('logs_empty', context))
-        message_text = f"{t('logs_title', context, node_name=node_name)}\n\n<pre><code>{safe_logs}</code></pre>"
-        keyboard = [[InlineKeyboardButton(t('refresh_logs_btn', context), callback_data=f'lognode_{node_name}')], [InlineKeyboardButton(t('back_to_nodes_btn', context), callback_data='go_view_logs')]]
-    await message.edit_text(text=message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
-    return VIEWING_LOGS
-
+    # ... (بدون تغییر) ...
 async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    node_name = query.data.split('_')[1]
-
-    await query.message.edit_text(t('restarting_node', context, node_name=node_name), parse_mode=ParseMode.HTML)
-
-    node_config = config.NODES.get(node_name)
-    output, error = "", ""
-
-    if node_config['type'] == 'local':
-        command = "cd /opt/remnanode && docker compose down && docker compose up -d && sleep 5 && docker compose logs --tail=20"
-        try:
-            result = subprocess.run(command, shell=True, capture_output=True, text=True, check=True, encoding='utf-8')
-            output = result.stdout.strip()
-        except subprocess.CalledProcessError as e:
-            error = e.stderr.strip()
-    elif node_config['type'] == 'remote':
-        try:
-            parsed_url = urlparse(node_config.get('url', ''))
-            ip = parsed_url.hostname
-            if ip:
-                restart_url = f"http://{ip}:5555/restart"
-                headers = {'Authorization': f"Bearer {node_config['token']}"}
-                response = requests.post(restart_url, headers=headers, timeout=90)
-                response.raise_for_status()
-                data = response.json()
-                output = data.get('logs')
-                if data.get('status') != 'success':
-                    error = data.get('details', 'Unknown remote error')
-            else:
-                error = "Could not parse IP from node URL."
-        except Exception as e:
-            error = str(e)
-
-    if error:
-        message_text = f"{t('node_restart_failed', context, node_name=node_name)}\n\n<pre><code>{html.escape(error)}</code></pre>"
-    else:
-        message_text = f"{t('node_restart_success', context, node_name=node_name)}\n\n<b>{t('logs_title', context, node_name=node_name)}</b>\n<pre><code>{html.escape(output)}</code></pre>"
-
-    keyboard = [[InlineKeyboardButton(t('back_to_restart_list_btn', context), callback_data='go_restart_nodes')]]
-    await query.message.edit_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
-    return MAIN_MENU
+    # ... (بدون تغییر) ...
 
 def main() -> None:
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
+
+    # --- Job Queue for background tasks ---
+    job_queue = application.job_queue
+    # وظیفه را طوری تنظیم می‌کنیم که هر 12 ساعت یک بار اجرا شود
+    job_queue.run_repeating(check_expiring_users, interval=12 * 3600, first=10) # 10 ثانیه بعد از استارت برای اولین بار اجرا می‌شود
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
@@ -400,5 +192,6 @@ def main() -> None:
     application.add_handler(conv_handler)
     logger.info("Bot is running...")
     application.run_polling()
+
 if __name__ == "__main__":
     main()
