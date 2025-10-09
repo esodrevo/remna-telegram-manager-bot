@@ -15,8 +15,10 @@ INSTALL_DIR="/opt/remna_bot"
 LOG_SERVER_DIR="/opt/remna_log_server"
 BOT_SERVICE_NAME="remna_bot"
 LOG_SERVICE_NAME="remna_log_server"
+WEBHOOK_SERVICE_NAME="remna_webhook"
 BOT_SERVICE_FILE="/etc/systemd/system/${BOT_SERVICE_NAME}.service"
 LOG_SERVICE_FILE="/etc/systemd/system/${LOG_SERVICE_NAME}.service"
+WEBHOOK_SERVICE_FILE="/etc/systemd/system/${WEBHOOK_SERVICE_NAME}.service"
 CONFIG_FILE="$INSTALL_DIR/config.py"
 MANAGER_SCRIPT_PATH="$INSTALL_DIR/remna_bot_manager.sh"
 EXECUTABLE_PATH="/usr/local/bin/remna_bot"
@@ -91,7 +93,9 @@ EOF
     curl -sL "${RAW_GITHUB_URL}/bot.py" -o "$INSTALL_DIR/bot.py"
     curl -sL "${RAW_GITHUB_URL}/locales.json" -o "$INSTALL_DIR/locales.json"
     curl -sL "${RAW_GITHUB_URL}/config_manager.py" -o "$INSTALL_DIR/config_manager.py"
-    
+    curl -sL "${RAW_GITHUB_URL}/notifier.py" -o "$INSTALL_DIR/notifier.py"
+    curl -sL "${RAW_GITHUB_URL}/webhook_listener.py" -o "$INSTALL_DIR/webhook_listener.py"
+
     cat << 'EOF' > "$INSTALL_DIR/settings.json"
 {"language": "fa"}
 EOF
@@ -111,16 +115,35 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 EOF
-        echo "Systemd service file created."
+        echo "Bot systemd service file created."
     fi
 
-    echo "Reloading, enabling and restarting the bot service..."
+    if [ ! -f "$WEBHOOK_SERVICE_FILE" ]; then
+        cat << EOF > "$WEBHOOK_SERVICE_FILE"
+[Unit]
+Description=Remna Bot Webhook Listener
+After=network.target
+[Service]
+User=root
+Group=root
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$PYTHON_VENV_EXEC $INSTALL_DIR/webhook_listener.py
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=multi-user.target
+EOF
+        echo "Webhook listener systemd service file created."
+    fi
+
+    echo "Reloading, enabling and restarting services..."
     systemctl daemon-reload
     systemctl enable "$BOT_SERVICE_NAME" >/dev/null 2>&1
     systemctl restart "$BOT_SERVICE_NAME"
+    systemctl enable "$WEBHOOK_SERVICE_NAME" >/dev/null 2>&1
+    systemctl restart "$WEBHOOK_SERVICE_NAME"
 
     if [ ! -f "$EXECUTABLE_PATH" ] || [ ! -L "$EXECUTABLE_PATH" ]; then
-        # This will work because the script is run from a file: ./installer.sh
         cp "$0" "$MANAGER_SCRIPT_PATH"
         chmod +x "$MANAGER_SCRIPT_PATH"
         ln -s "$MANAGER_SCRIPT_PATH" "$EXECUTABLE_PATH"
@@ -141,6 +164,15 @@ restart_bot() {
         systemctl restart "$BOT_SERVICE_NAME"
     fi
     echo -e "${GREEN}Operation completed.${NC}"
+    pause
+}
+
+toggle_notifications_menu() {
+    check_root
+    "$PYTHON_VENV_EXEC" "$INSTALL_DIR/config_manager.py" toggle_notifications
+    echo "Restarting services to apply changes..."
+    systemctl restart "$BOT_SERVICE_NAME"
+    systemctl restart "$WEBHOOK_SERVICE_NAME"
     pause
 }
 
@@ -338,8 +370,11 @@ uninstall_bot() {
     systemctl disable "$BOT_SERVICE_NAME" >/dev/null 2>&1
     systemctl stop "$LOG_SERVICE_NAME" >/dev/null 2>&1
     systemctl disable "$LOG_SERVICE_NAME" >/dev/null 2>&1
+    systemctl stop "$WEBHOOK_SERVICE_NAME" >/dev/null 2>&1
+    systemctl disable "$WEBHOOK_SERVICE_NAME" >/dev/null 2>&1
     rm -f "$BOT_SERVICE_FILE"
     rm -f "$LOG_SERVICE_FILE"
+    rm -f "$WEBHOOK_SERVICE_FILE"
     rm -rf "$INSTALL_DIR"
     rm -rf "$LOG_SERVER_DIR"
     rm -f "$EXECUTABLE_PATH"
@@ -364,23 +399,32 @@ show_menu() {
         else
             BOT_STATUS="[ ${YELLOW}Not Installed${NC} ]"
         fi
+        
+        if [ -f "$CONFIG_FILE" ] && grep -q "NOTIFICATIONS_ENABLED = True" "$CONFIG_FILE"; then
+            NOTIF_STATUS="[ ${GREEN}Enabled${NC} ]"
+        else
+            NOTIF_STATUS="[ ${RED}Disabled${NC} ]"
+        fi
         echo -e "Bot Status: $BOT_STATUS"
+        echo -e "Notifications: $NOTIF_STATUS"
         echo "----------------------------------------"
         echo "Select an option:"
         echo "  1) Install / Update Bot"
         echo "  2) Restart Bot Service"
         echo "  3) Add Nodes"
         echo "  4) Remove Nodes"
-        echo "  5) Uninstall Bot"
+        echo "  5) Enable/Disable Notifications"
+        echo "  6) Uninstall Bot"
         echo "  0) Exit"
         echo "----------------------------------------"
-        read -p "Enter your choice [1-5, 0]: " choice
+        read -p "Enter your choice [1-6, 0]: " choice
         case $choice in
             1) install_bot ;;
             2) restart_bot ;;
             3) add_node_menu ;;
             4) remove_node ;;
-            5) uninstall_bot ;;
+            5) toggle_notifications_menu ;;
+            6) uninstall_bot ;;
             0) break ;;
             *) echo -e "${RED}Invalid option. Please try again.${NC}"; pause ;;
         esac
@@ -389,13 +433,9 @@ show_menu() {
 }
 
 # --- Script Execution Starts Here ---
-# Check if standard input is a terminal. If not, this is a non-interactive execution.
 if [ -t 0 ]; then
-  # Standard input is a terminal, so show the interactive menu.
   show_menu
 else
-  # Standard input is not a terminal (e.g., a pipe).
-  # This installation method is not supported because the script requires user input for tokens.
   echo -e "${RED}Error: Direct execution via pipe is not supported as this script requires user input.${NC}"
   echo -e "${YELLOW}Please use the recommended two-step installation method:${NC}"
   echo
