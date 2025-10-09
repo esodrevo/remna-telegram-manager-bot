@@ -435,7 +435,7 @@ show_menu() {
             3) add_node_menu ;;
             4) remove_node ;;
             5) toggle_notifications_menu ;;
-            6) populate_cache_menu
+            6) populate_cache_menu ;;
             7) uninstall_bot ;;
             0) break ;;
             *) echo -e "${RED}Invalid option. Please try again.${NC}"; pause ;;
