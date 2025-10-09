@@ -102,7 +102,7 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
 
 async def check_expiring_users(context: ContextTypes.DEFAULT_TYPE):
     """
-    این تابع به صورت دوره‌ای اجرا شده و کاربرانی که تاریخ انقضایشان نزدیک است را بررسی می‌کند.
+    This function is run periodically and checks for users with near-expiry dates.
     """
     logger.info("Running job: check_expiring_users")
     if not getattr(config, 'NOTIFICATIONS_ENABLED', False):
@@ -307,8 +307,7 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if error: 
         await context.bot.send_message(chat_id=update.effective_chat.id, text=t('update_failed', context, error=error))
     else:
-        # Notifications are now handled by the webhook
-        pass
+        pass # Notifications are handled by the webhook
         
     await asyncio.sleep(1)
     return await show_user_card(update, context)
