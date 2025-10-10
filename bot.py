@@ -312,10 +312,11 @@ async def delete_user_confirmation_handler(update: Update, context: ContextTypes
 
     if action == 'cancel_delete':
         await query.message.delete()
-        await context.bot.send_message(chat_id=query.message.chat_id, text=t('delete_cancelled', context))
+        # await context.bot.send_message(chat_id=query.message.chat_id, text=t('delete_cancelled', context))
         return await show_user_card(update, context)
 
     if action == 'confirm_delete':
+        username = context.user_data.get('user_data', {}).get('username', '')
         await query.message.edit_text(t('deleting_user', context))
         user_uuid = context.user_data.get('user_uuid')
         if not user_uuid:
@@ -327,9 +328,11 @@ async def delete_user_confirmation_handler(update: Update, context: ContextTypes
         if error:
             await query.message.edit_text(f"❌ Error deleting user: {error}")
         else:
-            await query.message.edit_text(t('user_deleted_success', context))
+            await query.message.edit_text(
+                t('user_deleted_success', context, username=username),
+                parse_mode=ParseMode.HTML
+            )
         
-        # In both cases (success or fail), return to the main menu after deletion attempt.
         return await start(update, context)
     return USER_MENU
 
