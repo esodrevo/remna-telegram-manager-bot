@@ -81,6 +81,7 @@ def api_request(method: str, endpoint: str, payload: dict = None):
         logger.warning(f"<-- API Response Status: {response.status_code}")
         
         response.raise_for_status()
+        logger.info(f"--- API JSON RESPONSE ---: {response.text}")
         return response.json() if response.status_code != 204 else {}, None
         
     except requests.exceptions.HTTPError as errh:
