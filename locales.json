@@ -35,7 +35,6 @@
     "last_update": "🔄 <b>آخرین آپدیت:</b>",
     "not_updated_yet": "تاکنون آپدیت نشده",
     "subscription_link": "🔗 <b>لینک سابسکریپشن:</b>",
-    "happ_crypto_link": "🔗 <b>لینک Happ Crypto:</b>",
     "not_found": "یافت نشد",
     "edit_volume_btn": "✏️ ویرایش حجم",
     "edit_date_btn": "🗓 ویرایش تاریخ",
@@ -58,14 +57,16 @@
     "minutes_ago": "{minutes} دقیقه قبل",
     "hours_ago": "{hours} ساعت قبل",
     "days_ago": "{days} روز قبل",
-    "show_qr_btn": "📱 نمایش QR Code",
+    "show_qr_btn": "📱 QR کد سابسکریپشن",
     "back_to_user_info_btn": " بازگشت به اطلاعات کاربر",
     "enable_user_btn": "✅ فعال سازی",
     "disable_user_btn": "🚫 غیرفعال سازی",
     "enabling_user": "⏳ در حال فعال سازی...",
     "disabling_user": "⏳ در حال غیرفعال سازی...",
     "user_enabled_success": "✅ کاربر با موفقیت فعال شد",
-    "user_disabled_success": "✅ کاربر با موفقیت غیرفعال شد"
+    "user_disabled_success": "✅ کاربر با موفقیت غیرفعال شد",
+    "get_happ_qr_btn": "📲 لینک و QR کد Happ",
+    "happ_qr_caption": "لینک Happ Crypto برای کاربر <code>{username}</code>:"
   },
   "en": {
     "change_language_btn": "🌐 Change Language",
@@ -103,7 +104,6 @@
     "last_update": "🔄 <b>Last Update:</b>",
     "not_updated_yet": "Never",
     "subscription_link": "🔗 <b>Subscription Link:</b>",
-    "happ_crypto_link": "🔗 <b>Happ Crypto Link:</b>",
     "not_found": "Not found",
     "edit_volume_btn": "✏️ Edit Volume",
     "edit_date_btn": "🗓 Edit Date",
@@ -126,14 +126,16 @@
     "minutes_ago": "{minutes} minutes ago",
     "hours_ago": "{hours} hours ago",
     "days_ago": "{days} days ago",
-    "show_qr_btn": "📱 Show QR Code",
+    "show_qr_btn": "📱 Subscription QR",
     "back_to_user_info_btn": " Back to User Info",
     "enable_user_btn": "✅ Enable User",
     "disable_user_btn": "🚫 Disable User",
     "enabling_user": "⏳ Enabling user...",
     "disabling_user": "⏳ Disabling user...",
     "user_enabled_success": "✅ User enabled successfully",
-    "user_disabled_success": "✅ User disabled successfully"
+    "user_disabled_success": "✅ User disabled successfully",
+    "get_happ_qr_btn": "📲 Happ Link & QR",
+    "happ_qr_caption": "Happ Crypto link for user <code>{username}</code>:"
   },
   "ru": {
     "change_language_btn": "🌐 Сменить язык",
@@ -171,7 +173,6 @@
     "last_update": "🔄 <b>Последнее обновление:</b>",
     "not_updated_yet": "Никогда",
     "subscription_link": "🔗 <b>Ссылка:</b>",
-    "happ_crypto_link": "🔗 <b>Happ Crypto ссылка:</b>",
     "not_found": "Не найдено",
     "edit_volume_btn": "✏️ Изменить объем",
     "edit_date_btn": "🗓 Изменить дату",
@@ -194,13 +195,15 @@
     "minutes_ago": "{minutes} минут назад",
     "hours_ago": "{hours} часов назад",
     "days_ago": "{days} дней назад",
-    "show_qr_btn": "📱 Показать QR-код",
+    "show_qr_btn": "📱 QR-код подписки",
     "back_to_user_info_btn": " Назад к информации",
     "enable_user_btn": "✅ Включить",
     "disable_user_btn": "🚫 Отключить",
     "enabling_user": "⏳ Включение...",
     "disabling_user": "⏳ Отключение...",
     "user_enabled_success": "✅ Пользователь успешно включен",
-    "user_disabled_success": "✅ Пользователь успешно отключен"
+    "user_disabled_success": "✅ Пользователь успешно отключен",
+    "get_happ_qr_btn": "📲 Happ ссылка и QR",
+    "happ_qr_caption": "Happ Crypto ссылка для <code>{username}</code>:"
   }
 }
