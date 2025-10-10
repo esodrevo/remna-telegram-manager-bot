@@ -67,34 +67,18 @@ def human_readable_timediff(dt: datetime, context: ContextTypes.DEFAULT_TYPE):
     days = int(hours/24)
     return t('days_ago', context, days=days)
 
+# This is the original, clean version of the function
 def api_request(method: str, endpoint: str, payload: dict = None):
-    url = f"{config.PANEL_URL}{endpoint}"
-    headers = {'Authorization': f'Bearer {config.PANEL_API_TOKEN}', 'Accept': 'application/json', 'Content-Type': 'application/json'}
-    
-    # لاگ کردن تلاش برای ارسال درخواست
-    logger.warning(f"--> API Request: Attempting {method.upper()} to {url}")
-    
+    url = f"{config.PANEL_URL}{endpoint}"; headers = {'Authorization': f'Bearer {config.PANEL_API_TOKEN}', 'Accept': 'application/json', 'Content-Type': 'application/json'}
     try:
         response = requests.request(method.upper(), url, headers=headers, json=payload, timeout=15)
-        
-        # لاگ کردن کد وضعیت پاسخ دریافتی
-        logger.warning(f"<-- API Response Status: {response.status_code}")
-        
         response.raise_for_status()
-        logger.info(f"--- API JSON RESPONSE ---: {response.text}")
         return response.json() if response.status_code != 204 else {}, None
-        
     except requests.exceptions.HTTPError as errh:
-        # لاگ کردن خطای HTTP با جزئیات کامل
-        logger.error(f"[!!!] API HTTPError: {errh} | Status Code: {errh.response.status_code} | Response: {errh.response.text}", exc_info=True)
-        if errh.response.status_code == 404:
-            return None, "User not found"
-        return None, f"HTTP Error: {errh.response.status_code}"
-        
+        if errh.response.status_code == 404: return None, "User not found"
+        logger.error(f"Http Error: {errh} - Response: {errh.response.text}"); return None, f"HTTP Error: {errh.response.status_code}"
     except Exception as e:
-        # لاگ کردن هر خطای پیش‌بینی نشده دیگری
-        logger.error(f"[!!!] API Unexpected Error of type {type(e).__name__}: {e}", exc_info=True)
-        return None, "Unknown error"
+        logger.error(f"An unexpected error occurred: {e}"); return None, "Unknown error"
 
 def generate_qr_code(data: str):
     if not data: return None
@@ -109,8 +93,12 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
     safe_username = html.escape(user_data.get('username') or 'N/A')
     safe_client_app = html.escape(user_data.get('subLastUserAgent') or t('unknown', context))
     safe_sub_url = html.escape(user_data.get('subscriptionUrl') or t('not_found', context))
-    # Add this line to get the Happ Crypto link
-    safe_happ_link = html.escape(user_data.get('happCryptoLink') or t('not_found', context))
+    
+    # --- THIS IS THE FIX ---
+    # Get the 'happ' object first, defaulting to an empty dictionary if it doesn't exist.
+    happ_data = user_data.get('happ', {})
+    # Then get the 'cryptoLink' from that object.
+    safe_happ_link = html.escape(happ_data.get('cryptoLink') or t('not_found', context))
     
     status = t('status_active', context) if user_data.get('status') == 'ACTIVE' else t('status_inactive', context)
     data_limit = user_data.get('trafficLimitBytes', 0)
@@ -132,7 +120,6 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
     sub_last_update_dt = parse_iso_date(user_data.get('subLastOpenedAt'))
     last_update_relative = human_readable_timediff(sub_last_update_dt, context)
     
-    # Add the Happ Crypto link to the returned string
     return (
         f"{t('user_info_title', context, username=safe_username)}\n\n"
         f"{t('status', context)} {status}\n\n"
@@ -249,7 +236,6 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data['username'] = username_to_fetch
     sent_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('fetching_user_info', context, username=username_to_fetch), parse_mode=ParseMode.HTML)
     data, error = api_request('GET', f'/api/users/by-username/{username_to_fetch}')
-    
     if error:
         await sent_message.edit_text(t('error_fetching', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])); return AWAITING_USERNAME
     user_data = data.get('response', {}); context.user_data['user_uuid'] = user_data.get('uuid'); context.user_data['sub_url'] = user_data.get('subscriptionUrl')
