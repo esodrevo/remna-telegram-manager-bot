@@ -67,7 +67,6 @@ def human_readable_timediff(dt: datetime, context: ContextTypes.DEFAULT_TYPE):
     days = int(hours/24)
     return t('days_ago', context, days=days)
 
-# This is the original, clean version of the function
 def api_request(method: str, endpoint: str, payload: dict = None):
     url = f"{config.PANEL_URL}{endpoint}"; headers = {'Authorization': f'Bearer {config.PANEL_API_TOKEN}', 'Accept': 'application/json', 'Content-Type': 'application/json'}
     try:
@@ -88,54 +87,37 @@ def generate_qr_code(data: str):
     img.save(buf, 'PNG'); buf.seek(0)
     return buf.getvalue()
 
-# --- FUNCTION MODIFIED ---
 def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE):
     safe_username = html.escape(user_data.get('username') or 'N/A')
     safe_client_app = html.escape(user_data.get('subLastUserAgent') or t('unknown', context))
     safe_sub_url = html.escape(user_data.get('subscriptionUrl') or t('not_found', context))
-    
-    # --- THIS IS THE FIX ---
-    # Get the 'happ' object first, defaulting to an empty dictionary if it doesn't exist.
-    happ_data = user_data.get('happ', {})
-    # Then get the 'cryptoLink' from that object.
-    safe_happ_link = html.escape(happ_data.get('cryptoLink') or t('not_found', context))
-    
     status = t('status_active', context) if user_data.get('status') == 'ACTIVE' else t('status_inactive', context)
     data_limit = user_data.get('trafficLimitBytes', 0)
     data_usage = user_data.get('usedTrafficBytes', 0)
     remaining_data = data_limit - data_usage if data_limit > 0 else 0
     expire_dt = parse_iso_date(user_data.get('expireAt'))
     remaining_days, expire_date_fa = (t('unlimited', context), t('unlimited', context))
-    
     if expire_dt:
         expire_date_fa = expire_dt.strftime("%Y/%m/%d")
         time_diff = expire_dt - datetime.now(timezone.utc)
         if time_diff.total_seconds() > 0:
-            days = time_diff.days
-            hours = time_diff.seconds // 3600
+            days = time_diff.days; hours = time_diff.seconds // 3600
             remaining_days = f"{days} {t('days_unit', context)} {t('and_conjunction', context)} {hours} {t('hours_unit', context)}"
-        else:
-            remaining_days = t('expired', context)
-            
+        else: remaining_days = t('expired', context)
     sub_last_update_dt = parse_iso_date(user_data.get('subLastOpenedAt'))
     last_update_relative = human_readable_timediff(sub_last_update_dt, context)
     
-    return (
-        f"{t('user_info_title', context, username=safe_username)}\n\n"
-        f"{t('status', context)} {status}\n\n"
-        f"{t('total_limit', context)} {format_bytes(data_limit)}\n"
-        f"{t('usage', context)} {format_bytes(data_usage)}\n"
-        f"{t('remaining_volume', context)} {format_bytes(remaining_data)}\n\n"
-        f"{t('expire_date', context)} {expire_date_fa}\n"
-        f"{t('remaining_time', context)} {remaining_days}\n\n"
-        f"{t('client_software', context)} <code>{safe_client_app}</code>\n"
-        f"{t('last_update', context)} {last_update_relative}\n\n"
-        f"{t('subscription_link', context)}\n"
-        f"<code>{safe_sub_url}</code>\n\n"
-        f"{t('happ_crypto_link', context)}\n"
-        f"<code>{safe_happ_link}</code>"
-    )
-# --- END OF MODIFIED FUNCTION ---
+    return (f"{t('user_info_title', context, username=safe_username)}\n\n"
+            f"{t('status', context)} {status}\n\n"
+            f"{t('total_limit', context)} {format_bytes(data_limit)}\n"
+            f"{t('usage', context)} {format_bytes(data_usage)}\n"
+            f"{t('remaining_volume', context)} {format_bytes(remaining_data)}\n\n"
+            f"{t('expire_date', context)} {expire_date_fa}\n"
+            f"{t('remaining_time', context)} {remaining_days}\n\n"
+            f"{t('client_software', context)} <code>{safe_client_app}</code>\n"
+            f"{t('last_update', context)} {last_update_relative}\n\n"
+            f"{t('subscription_link', context)}\n"
+            f"<code>{safe_sub_url}</code>")
 
 def get_logs_from_node(node_name: str):
     node_config = config.NODES.get(node_name)
@@ -223,13 +205,11 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if update.message and not username_to_fetch:
         username_to_fetch = update.message.text
     if update.message:
-        try:
-            await update.message.delete()
+        try: await update.message.delete()
         except BadRequest: pass
     prompt_message_id = context.user_data.pop('prompt_message_id', None)
     if prompt_message_id:
-        try:
-            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_message_id)
+        try: await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_message_id)
         except BadRequest: pass
     get_lang(context)
     if not username_to_fetch: return await start(update, context)
@@ -238,73 +218,84 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     data, error = api_request('GET', f'/api/users/by-username/{username_to_fetch}')
     if error:
         await sent_message.edit_text(t('error_fetching', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])); return AWAITING_USERNAME
-    user_data = data.get('response', {}); context.user_data['user_uuid'] = user_data.get('uuid'); context.user_data['sub_url'] = user_data.get('subscriptionUrl')
+    user_data = data.get('response', {});
+    context.user_data['user_data'] = user_data; context.user_data['user_uuid'] = user_data.get('uuid')
     message_text = build_user_info_message(user_data, context)
+    action_buttons = [InlineKeyboardButton(t('reset_usage_btn', context), callback_data='reset_usage')]
+    if user_data.get('status') == 'ACTIVE': action_buttons.append(InlineKeyboardButton(t('disable_user_btn', context), callback_data='disable_user'))
+    else: action_buttons.append(InlineKeyboardButton(t('enable_user_btn', context), callback_data='enable_user'))
     keyboard_list = [
         [InlineKeyboardButton(t('edit_volume_btn', context), callback_data='edit_limit'), InlineKeyboardButton(t('edit_date_btn', context), callback_data='edit_expire')],
-        [InlineKeyboardButton(t('show_qr_btn', context), callback_data='show_qr')],
+        action_buttons,
+        [InlineKeyboardButton(t('show_qr_btn', context), callback_data='show_qr'), InlineKeyboardButton(t('get_happ_qr_btn', context), callback_data='get_happ_qr')],
         [InlineKeyboardButton(t('refresh_btn', context), callback_data='refresh')],
         [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]
     ]
-    action_buttons = [InlineKeyboardButton(t('reset_usage_btn', context), callback_data='reset_usage')]
-    if user_data.get('status') == 'ACTIVE':
-        action_buttons.append(InlineKeyboardButton(t('disable_user_btn', context), callback_data='disable_user'))
-    else:
-        action_buttons.append(InlineKeyboardButton(t('enable_user_btn', context), callback_data='enable_user'))
-    keyboard_list.insert(1, action_buttons)
     await sent_message.edit_text(text=message_text, reply_markup=InlineKeyboardMarkup(keyboard_list), parse_mode=ParseMode.HTML)
     return USER_MENU
 
 async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer(); action = query.data
-    if action == 'back_to_main':
-        return await start(update, context)
+    if action == 'back_to_main': return await start(update, context)
     if action == 'refresh':
         await query.message.delete(); return await show_user_card(update, context)
+    
+    user_data = context.user_data.get('user_data', {})
+    
+    if action == 'get_happ_qr':
+        happ_link = user_data.get('happ', {}).get('cryptoLink')
+        qr_code_bytes = generate_qr_code(happ_link)
+        if qr_code_bytes:
+            username = user_data.get('username')
+            caption = t('happ_qr_caption', context, username=username)
+            full_caption = f"{caption}\n<code>{html.escape(happ_link)}</code>"
+            media = InputMediaPhoto(media=qr_code_bytes, caption=full_caption, parse_mode=ParseMode.HTML)
+            keyboard = [[InlineKeyboardButton(t('back_to_user_info_btn', context), callback_data='back_to_user_info')]]
+            await query.message.edit_media(media=media, reply_markup=InlineKeyboardMarkup(keyboard))
+            return QR_VIEW
+        else:
+            await query.answer(text=t('not_found', context), show_alert=True)
+            return USER_MENU
+
     if action in ['enable_user', 'disable_user', 'reset_usage']:
         action_str, popup_text, success_text = '', '', ''
-        if action == 'enable_user':
-            action_str = 'enable'
-            popup_text = t('enabling_user', context)
-            success_text = t('user_enabled_success', context)
-        elif action == 'disable_user':
-            action_str = 'disable'
-            popup_text = t('disabling_user', context)
-            success_text = t('user_disabled_success', context)
-        elif action == 'reset_usage':
-            action_str = 'reset-traffic'
-            popup_text = t('reseting_usage', context)
-            success_text = t('reset_usage_success', context)
+        if action == 'enable_user': action_str, popup_text, success_text = 'enable', t('enabling_user', context), t('user_enabled_success', context)
+        elif action == 'disable_user': action_str, popup_text, success_text = 'disable', t('disabling_user', context), t('user_disabled_success', context)
+        elif action == 'reset_usage': action_str, popup_text, success_text = 'reset-traffic', t('reseting_usage', context), t('reset_usage_success', context)
         await query.answer(text=popup_text, show_alert=False)
         user_uuid = context.user_data.get('user_uuid')
-        if not user_uuid:
-            await query.answer(text="Error: User UUID not found.", show_alert=True)
-            return USER_MENU
+        if not user_uuid: await query.answer(text="Error: User UUID not found.", show_alert=True); return USER_MENU
         endpoint = f'/api/users/{user_uuid}/actions/{action_str}'
         _, error = api_request('POST', endpoint)
-        if error:
-            await query.answer(text=f"API Error: {error}", show_alert=True)
-            return USER_MENU
+        if error: await query.answer(text=f"API Error: {error}", show_alert=True)
         else:
             await query.answer(text=success_text, show_alert=False)
             await query.message.delete()
             return await show_user_card(update, context)
+        return USER_MENU
+        
     if action == 'show_qr':
-        qr_code_bytes = generate_qr_code(context.user_data.get('sub_url'))
+        subscription_url = user_data.get('subscriptionUrl')
+        qr_code_bytes = generate_qr_code(subscription_url)
         if qr_code_bytes:
             media = InputMediaPhoto(media=qr_code_bytes)
             keyboard = [[InlineKeyboardButton(t('back_to_user_info_btn', context), callback_data='back_to_user_info')]]
             await query.message.edit_media(media=media, reply_markup=InlineKeyboardMarkup(keyboard))
             return QR_VIEW
         return USER_MENU
+        
     username = context.user_data.get('username')
-    await query.message.edit_text(text=t('ask_for_new_limit', context, username=username) if action == 'edit_limit' else t('ask_for_new_expire', context, username=username), parse_mode=ParseMode.HTML)
-    context.user_data['editing'] = 'limit' if action == 'edit_limit' else 'expire'
-    context.user_data['prompt_message_id'] = query.message.message_id
-    return AWAITING_LIMIT if action == 'edit_limit' else AWAITING_EXPIRE
+    if action == 'edit_limit':
+        await query.message.edit_text(text=t('ask_for_new_limit', context, username=username), parse_mode=ParseMode.HTML)
+        context.user_data['editing'] = 'limit'; return AWAITING_LIMIT
+    elif action == 'edit_expire':
+        await query.message.edit_text(text=t('ask_for_new_expire', context, username=username), parse_mode=ParseMode.HTML)
+        context.user_data['editing'] = 'expire'; return AWAITING_EXPIRE
+    return USER_MENU
 
 async def back_to_user_info_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer()
+    # Delete the media message and resend the user card
     await query.message.delete()
     return await show_user_card(update, context)
 
@@ -312,10 +303,8 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await update.message.delete()
     prompt_message_id = context.user_data.pop('prompt_message_id', None)
     if prompt_message_id:
-        try:
-            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_message_id)
-        except BadRequest:
-            pass
+        try: await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_message_id)
+        except BadRequest: pass
     if not context.user_data.get('user_uuid'): return await start(update, context)
     payload = {}
     try:
@@ -331,14 +320,10 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 async def logs_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer(); action = query.data
-    if action == 'back_to_main':
-        return await start(update, context)
-    if action == 'go_view_logs':
-        return await show_node_list(update, context)
-    try:
-        await query.message.delete()
-    except BadRequest:
-        pass
+    if action == 'back_to_main': return await start(update, context)
+    if action == 'go_view_logs': return await show_node_list(update, context)
+    try: await query.message.delete()
+    except BadRequest: pass
     node_name = action.split('_')[1]; context.user_data['selected_node'] = node_name
     message = await context.bot.send_message(chat_id=query.message.chat_id, text=t('fetching_logs', context, node_name=node_name), parse_mode=ParseMode.HTML)
     logs, error = get_logs_from_node(node_name); MAX_LOG_LENGTH = 3800
@@ -354,61 +339,41 @@ async def logs_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return VIEWING_LOGS
 
 async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
+    query = update.callback_query; await query.answer()
     node_name = query.data.split('_')[1]
-
     await query.message.edit_text(t('restarting_node', context, node_name=node_name), parse_mode=ParseMode.HTML)
-
     node_config = config.NODES.get(node_name)
     output, error = "", ""
-
     if node_config['type'] == 'local':
         command = "cd /opt/remnanode && docker compose down && docker compose up -d && sleep 5 && docker compose logs --tail=20"
         try:
             result = subprocess.run(command, shell=True, capture_output=True, text=True, check=True, encoding='utf-8')
             output = result.stdout.strip()
-        except subprocess.CalledProcessError as e:
-            error = e.stderr.strip()
+        except subprocess.CalledProcessError as e: error = e.stderr.strip()
     elif node_config['type'] == 'remote':
         try:
-            parsed_url = urlparse(node_config.get('url', ''))
-            ip = parsed_url.hostname
+            parsed_url = urlparse(node_config.get('url', '')); ip = parsed_url.hostname
             if ip:
-                restart_url = f"http://{ip}:5555/restart"
-                headers = {'Authorization': f"Bearer {node_config['token']}"}
-                response = requests.post(restart_url, headers=headers, timeout=90)
-                response.raise_for_status()
-                data = response.json()
-                output = data.get('logs')
-                if data.get('status') != 'success':
-                    error = data.get('details', 'Unknown remote error')
-            else:
-                error = "Could not parse IP from node URL."
-        except Exception as e:
-            error = str(e)
-
-    if error:
-        message_text = f"{t('node_restart_failed', context, node_name=node_name)}\n\n<pre><code>{html.escape(error)}</code></pre>"
-    else:
-        message_text = f"{t('node_restart_success', context, node_name=node_name)}\n\n<b>{t('logs_title', context, node_name=node_name)}</b>\n<pre><code>{html.escape(output)}</code></pre>"
-
+                restart_url = f"http://{ip}:5555/restart"; headers = {'Authorization': f"Bearer {node_config['token']}"}
+                response = requests.post(restart_url, headers=headers, timeout=90); response.raise_for_status()
+                data = response.json(); output = data.get('logs')
+                if data.get('status') != 'success': error = data.get('details', 'Unknown remote error')
+            else: error = "Could not parse IP from node URL."
+        except Exception as e: error = str(e)
+    if error: message_text = f"{t('node_restart_failed', context, node_name=node_name)}\n\n<pre><code>{html.escape(error)}</code></pre>"
+    else: message_text = f"{t('node_restart_success', context, node_name=node_name)}\n\n<b>{t('logs_title', context, node_name=node_name)}</b>\n<pre><code>{html.escape(output)}</code></pre>"
     keyboard = [[InlineKeyboardButton(t('back_to_restart_list_btn', context), callback_data='go_restart_nodes')]]
     await query.message.edit_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
     return MAIN_MENU
 
 def main() -> None:
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
-
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
             MAIN_MENU: [CallbackQueryHandler(main_menu_handler), CallbackQueryHandler(start, pattern='^back_to_main$')],
             SELECTING_LANGUAGE: [CallbackQueryHandler(set_lang_callback, pattern='^set_lang_'), CallbackQueryHandler(start, pattern='^back_to_main$')],
-            AWAITING_USERNAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, show_user_card),
-                CallbackQueryHandler(start, pattern='^back_to_main$')
-            ],
+            AWAITING_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_user_card), CallbackQueryHandler(start, pattern='^back_to_main$')],
             USER_MENU: [CallbackQueryHandler(user_menu_handler)],
             QR_VIEW: [CallbackQueryHandler(back_to_user_info_handler, pattern='^back_to_user_info$')],
             AWAITING_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
@@ -422,5 +387,6 @@ def main() -> None:
     application.add_handler(conv_handler)
     logger.info("Bot is running...")
     application.run_polling()
+
 if __name__ == "__main__":
     main()
