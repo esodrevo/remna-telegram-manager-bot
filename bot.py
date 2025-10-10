@@ -87,16 +87,51 @@ def generate_qr_code(data: str):
     img.save(buf, 'PNG'); buf.seek(0)
     return buf.getvalue()
 
+# --- FUNCTION MODIFIED ---
 def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE):
-    safe_username = html.escape(user_data.get('username') or 'N/A'); safe_client_app = html.escape(user_data.get('subLastUserAgent') or t('unknown', context)); safe_sub_url = html.escape(user_data.get('subscriptionUrl') or t('not_found', context))
-    status = t('status_active', context) if user_data.get('status') == 'ACTIVE' else t('status_inactive', context); data_limit = user_data.get('trafficLimitBytes', 0); data_usage = user_data.get('usedTrafficBytes', 0); remaining_data = data_limit - data_usage if data_limit > 0 else 0; expire_dt = parse_iso_date(user_data.get('expireAt')); remaining_days, expire_date_fa = (t('unlimited', context), t('unlimited', context))
+    safe_username = html.escape(user_data.get('username') or 'N/A')
+    safe_client_app = html.escape(user_data.get('subLastUserAgent') or t('unknown', context))
+    safe_sub_url = html.escape(user_data.get('subscriptionUrl') or t('not_found', context))
+    # Add this line to get the Happ Crypto link
+    safe_happ_link = html.escape(user_data.get('happCryptoLink') or t('not_found', context))
+    
+    status = t('status_active', context) if user_data.get('status') == 'ACTIVE' else t('status_inactive', context)
+    data_limit = user_data.get('trafficLimitBytes', 0)
+    data_usage = user_data.get('usedTrafficBytes', 0)
+    remaining_data = data_limit - data_usage if data_limit > 0 else 0
+    expire_dt = parse_iso_date(user_data.get('expireAt'))
+    remaining_days, expire_date_fa = (t('unlimited', context), t('unlimited', context))
+    
     if expire_dt:
-        expire_date_fa = expire_dt.strftime("%Y/%m/%d"); time_diff = expire_dt - datetime.now(timezone.utc)
+        expire_date_fa = expire_dt.strftime("%Y/%m/%d")
+        time_diff = expire_dt - datetime.now(timezone.utc)
         if time_diff.total_seconds() > 0:
-            days = time_diff.days; hours = time_diff.seconds // 3600; remaining_days = f"{days} {t('days_unit', context)} {t('and_conjunction', context)} {hours} {t('hours_unit', context)}"
-        else: remaining_days = t('expired', context)
-    sub_last_update_dt = parse_iso_date(user_data.get('subLastOpenedAt')); last_update_relative = human_readable_timediff(sub_last_update_dt, context)
-    return (f"{t('user_info_title', context, username=safe_username)}\n\n" f"{t('status', context)} {status}\n\n" f"{t('total_limit', context)} {format_bytes(data_limit)}\n" f"{t('usage', context)} {format_bytes(data_usage)}\n" f"{t('remaining_volume', context)} {format_bytes(remaining_data)}\n\n" f"{t('expire_date', context)} {expire_date_fa}\n" f"{t('remaining_time', context)} {remaining_days}\n\n" f"{t('client_software', context)} <code>{safe_client_app}</code>\n" f"{t('last_update', context)} {last_update_relative}\n\n" f"{t('subscription_link', context)}\n" f"<code>{safe_sub_url}</code>")
+            days = time_diff.days
+            hours = time_diff.seconds // 3600
+            remaining_days = f"{days} {t('days_unit', context)} {t('and_conjunction', context)} {hours} {t('hours_unit', context)}"
+        else:
+            remaining_days = t('expired', context)
+            
+    sub_last_update_dt = parse_iso_date(user_data.get('subLastOpenedAt'))
+    last_update_relative = human_readable_timediff(sub_last_update_dt, context)
+    
+    # Add the Happ Crypto link to the returned string
+    return (
+        f"{t('user_info_title', context, username=safe_username)}\n\n"
+        f"{t('status', context)} {status}\n\n"
+        f"{t('total_limit', context)} {format_bytes(data_limit)}\n"
+        f"{t('usage', context)} {format_bytes(data_usage)}\n"
+        f"{t('remaining_volume', context)} {format_bytes(remaining_data)}\n\n"
+        f"{t('expire_date', context)} {expire_date_fa}\n"
+        f"{t('remaining_time', context)} {remaining_days}\n\n"
+        f"{t('client_software', context)} <code>{safe_client_app}</code>\n"
+        f"{t('last_update', context)} {last_update_relative}\n\n"
+        f"{t('subscription_link', context)}\n"
+        f"<code>{safe_sub_url}</code>\n\n"
+        f"{t('happ_crypto_link', context)}\n"
+        f"<code>{safe_happ_link}</code>"
+    )
+# --- END OF MODIFIED FUNCTION ---
 
 def get_logs_from_node(node_name: str):
     node_config = config.NODES.get(node_name)
@@ -201,25 +236,18 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await sent_message.edit_text(t('error_fetching', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])); return AWAITING_USERNAME
     user_data = data.get('response', {}); context.user_data['user_uuid'] = user_data.get('uuid'); context.user_data['sub_url'] = user_data.get('subscriptionUrl')
     message_text = build_user_info_message(user_data, context)
-    
-    # --- CHANGED BLOCK START ---
     keyboard_list = [
         [InlineKeyboardButton(t('edit_volume_btn', context), callback_data='edit_limit'), InlineKeyboardButton(t('edit_date_btn', context), callback_data='edit_expire')],
-        # Action buttons will be inserted here
         [InlineKeyboardButton(t('show_qr_btn', context), callback_data='show_qr')],
         [InlineKeyboardButton(t('refresh_btn', context), callback_data='refresh')],
         [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]
     ]
-    
     action_buttons = [InlineKeyboardButton(t('reset_usage_btn', context), callback_data='reset_usage')]
     if user_data.get('status') == 'ACTIVE':
         action_buttons.append(InlineKeyboardButton(t('disable_user_btn', context), callback_data='disable_user'))
     else:
         action_buttons.append(InlineKeyboardButton(t('enable_user_btn', context), callback_data='enable_user'))
-    
     keyboard_list.insert(1, action_buttons)
-    # --- CHANGED BLOCK END ---
-
     await sent_message.edit_text(text=message_text, reply_markup=InlineKeyboardMarkup(keyboard_list), parse_mode=ParseMode.HTML)
     return USER_MENU
 
@@ -229,8 +257,6 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return await start(update, context)
     if action == 'refresh':
         await query.message.delete(); return await show_user_card(update, context)
-
-    # --- CHANGED BLOCK START ---
     if action in ['enable_user', 'disable_user', 'reset_usage']:
         action_str, popup_text, success_text = '', '', ''
         if action == 'enable_user':
@@ -245,16 +271,13 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             action_str = 'reset-traffic'
             popup_text = t('reseting_usage', context)
             success_text = t('reset_usage_success', context)
-
         await query.answer(text=popup_text, show_alert=False)
         user_uuid = context.user_data.get('user_uuid')
         if not user_uuid:
             await query.answer(text="Error: User UUID not found.", show_alert=True)
             return USER_MENU
-            
         endpoint = f'/api/users/{user_uuid}/actions/{action_str}'
         _, error = api_request('POST', endpoint)
-        
         if error:
             await query.answer(text=f"API Error: {error}", show_alert=True)
             return USER_MENU
@@ -262,8 +285,6 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await query.answer(text=success_text, show_alert=False)
             await query.message.delete()
             return await show_user_card(update, context)
-    # --- CHANGED BLOCK END ---
-
     if action == 'show_qr':
         qr_code_bytes = generate_qr_code(context.user_data.get('sub_url'))
         if qr_code_bytes:
