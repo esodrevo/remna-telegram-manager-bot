@@ -66,7 +66,14 @@
     "user_enabled_success": "✅ کاربر با موفقیت فعال شد",
     "user_disabled_success": "✅ کاربر با موفقیت غیرفعال شد",
     "get_happ_qr_btn": "📲 لینک و QR کد Happ",
-    "happ_qr_caption": "لینک Happ Crypto برای کاربر <code>{username}</code>:"
+    "happ_qr_caption": "لینک Happ Crypto برای کاربر <code>{username}</code>:",
+    "delete_user_btn": "🗑️ حذف کاربر",
+    "delete_confirm_prompt": "⚠️ <b>اخطار!</b>\nآیا از حذف کامل کاربر <code>{username}</code> مطمئن هستید؟\n\nاین عمل غیرقابل بازگشت است!",
+    "confirm_delete_btn": "✅ بله، حذف کن",
+    "cancel_delete_btn": " خیر، انصراف",
+    "deleting_user": "⏳ در حال حذف کاربر...",
+    "user_deleted_success": "✅ کاربر با موفقیت حذف شد.",
+    "delete_cancelled": "عملیات حذف لغو شد."
   },
   "en": {
     "change_language_btn": "🌐 Change Language",
@@ -135,7 +142,14 @@
     "user_enabled_success": "✅ User enabled successfully",
     "user_disabled_success": "✅ User disabled successfully",
     "get_happ_qr_btn": "📲 Happ Link & QR",
-    "happ_qr_caption": "Happ Crypto link for user <code>{username}</code>:"
+    "happ_qr_caption": "Happ Crypto link for user <code>{username}</code>:",
+    "delete_user_btn": "🗑️ Delete User",
+    "delete_confirm_prompt": "⚠️ <b>WARNING!</b>\nAre you sure you want to permanently delete user <code>{username}</code>?\n\nThis action cannot be undone!",
+    "confirm_delete_btn": "✅ Yes, delete",
+    "cancel_delete_btn": " No, cancel",
+    "deleting_user": "⏳ Deleting user...",
+    "user_deleted_success": "✅ User deleted successfully.",
+    "delete_cancelled": "Deletion cancelled."
   },
   "ru": {
     "change_language_btn": "🌐 Сменить язык",
@@ -204,6 +218,13 @@
     "user_enabled_success": "✅ Пользователь успешно включен",
     "user_disabled_success": "✅ Пользователь успешно отключен",
     "get_happ_qr_btn": "📲 Happ ссылка и QR",
-    "happ_qr_caption": "Happ Crypto ссылка для <code>{username}</code>:"
+    "happ_qr_caption": "Happ Crypto ссылка для <code>{username}</code>:",
+    "delete_user_btn": "🗑️ Удалить",
+    "delete_confirm_prompt": "⚠️ <b>ВНИМАНИЕ!</b>\nВы уверены, что хотите удалить пользователя <code>{username}</code>?\n\nЭто действие необратимо!",
+    "confirm_delete_btn": "✅ Да, удалить",
+    "cancel_delete_btn": " Нет, отмена",
+    "deleting_user": "⏳ Удаление...",
+    "user_deleted_success": "✅ Пользователь удален.",
+    "delete_cancelled": "Удаление отменено."
   }
 }
