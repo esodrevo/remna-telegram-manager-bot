@@ -232,8 +232,7 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data['username'] = username_to_fetch
     sent_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('fetching_user_info', context, username=username_to_fetch), parse_mode=ParseMode.HTML)
     data, error = api_request('GET', f'/api/users/by-username/{username_to_fetch}')
-    print("--- REMNA PANEL API RESPONSE ---")
-    print(data)
+    logger.info(f"--- REMNA PANEL API RESPONSE ---: {data}")
     
     if error:
         await sent_message.edit_text(t('error_fetching', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])); return AWAITING_USERNAME
