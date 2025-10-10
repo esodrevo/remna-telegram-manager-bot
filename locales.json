@@ -72,7 +72,7 @@
     "confirm_delete_btn": "✅ بله، حذف کن",
     "cancel_delete_btn": " خیر، انصراف",
     "deleting_user": "⏳ در حال حذف کاربر...",
-    "user_deleted_success": "✅ کاربر با موفقیت حذف شد.",
+    "user_deleted_success": "✅ کاربر <code>{username}</code> با موفقیت حذف شد.",
     "delete_cancelled": "عملیات حذف لغو شد."
   },
   "en": {
@@ -148,7 +148,7 @@
     "confirm_delete_btn": "✅ Yes, delete",
     "cancel_delete_btn": " No, cancel",
     "deleting_user": "⏳ Deleting user...",
-    "user_deleted_success": "✅ User deleted successfully.",
+    "user_deleted_success": "✅ User <code>{username}</code> was deleted successfully.",
     "delete_cancelled": "Deletion cancelled."
   },
   "ru": {
@@ -224,7 +224,7 @@
     "confirm_delete_btn": "✅ Да, удалить",
     "cancel_delete_btn": " Нет, отмена",
     "deleting_user": "⏳ Удаление...",
-    "user_deleted_success": "✅ Пользователь удален.",
+    "user_deleted_success": "✅ Пользователь <code>{username}</code> был успешно удален.",
     "delete_cancelled": "Удаление отменено."
   }
 }
