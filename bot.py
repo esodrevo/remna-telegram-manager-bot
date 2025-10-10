@@ -201,16 +201,25 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await sent_message.edit_text(t('error_fetching', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])); return AWAITING_USERNAME
     user_data = data.get('response', {}); context.user_data['user_uuid'] = user_data.get('uuid'); context.user_data['sub_url'] = user_data.get('subscriptionUrl')
     message_text = build_user_info_message(user_data, context)
+    
+    # --- CHANGED BLOCK START ---
     keyboard_list = [
         [InlineKeyboardButton(t('edit_volume_btn', context), callback_data='edit_limit'), InlineKeyboardButton(t('edit_date_btn', context), callback_data='edit_expire')],
+        # Action buttons will be inserted here
         [InlineKeyboardButton(t('show_qr_btn', context), callback_data='show_qr')],
         [InlineKeyboardButton(t('refresh_btn', context), callback_data='refresh')],
         [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]
     ]
+    
+    action_buttons = [InlineKeyboardButton(t('reset_usage_btn', context), callback_data='reset_usage')]
     if user_data.get('status') == 'ACTIVE':
-        keyboard_list.insert(1, [InlineKeyboardButton(t('disable_user_btn', context), callback_data='disable_user')])
+        action_buttons.append(InlineKeyboardButton(t('disable_user_btn', context), callback_data='disable_user'))
     else:
-        keyboard_list.insert(1, [InlineKeyboardButton(t('enable_user_btn', context), callback_data='enable_user')])
+        action_buttons.append(InlineKeyboardButton(t('enable_user_btn', context), callback_data='enable_user'))
+    
+    keyboard_list.insert(1, action_buttons)
+    # --- CHANGED BLOCK END ---
+
     await sent_message.edit_text(text=message_text, reply_markup=InlineKeyboardMarkup(keyboard_list), parse_mode=ParseMode.HTML)
     return USER_MENU
 
@@ -220,24 +229,41 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return await start(update, context)
     if action == 'refresh':
         await query.message.delete(); return await show_user_card(update, context)
-    if action in ['enable_user', 'disable_user']:
-        action_str = 'enable' if action == 'enable_user' else 'disable'
-        popup_text = t('enabling_user', context) if action_str == 'enable' else t('disabling_user', context)
+
+    # --- CHANGED BLOCK START ---
+    if action in ['enable_user', 'disable_user', 'reset_usage']:
+        action_str, popup_text, success_text = '', '', ''
+        if action == 'enable_user':
+            action_str = 'enable'
+            popup_text = t('enabling_user', context)
+            success_text = t('user_enabled_success', context)
+        elif action == 'disable_user':
+            action_str = 'disable'
+            popup_text = t('disabling_user', context)
+            success_text = t('user_disabled_success', context)
+        elif action == 'reset_usage':
+            action_str = 'reset-traffic'
+            popup_text = t('reseting_usage', context)
+            success_text = t('reset_usage_success', context)
+
         await query.answer(text=popup_text, show_alert=False)
         user_uuid = context.user_data.get('user_uuid')
         if not user_uuid:
             await query.answer(text="Error: User UUID not found.", show_alert=True)
             return USER_MENU
+            
         endpoint = f'/api/users/{user_uuid}/actions/{action_str}'
         _, error = api_request('POST', endpoint)
+        
         if error:
             await query.answer(text=f"API Error: {error}", show_alert=True)
             return USER_MENU
         else:
-            success_text = t('user_enabled_success', context) if action_str == 'enable' else t('user_disabled_success', context)
             await query.answer(text=success_text, show_alert=False)
             await query.message.delete()
             return await show_user_card(update, context)
+    # --- CHANGED BLOCK END ---
+
     if action == 'show_qr':
         qr_code_bytes = generate_qr_code(context.user_data.get('sub_url'))
         if qr_code_bytes:
