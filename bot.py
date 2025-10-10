@@ -68,16 +68,32 @@ def human_readable_timediff(dt: datetime, context: ContextTypes.DEFAULT_TYPE):
     return t('days_ago', context, days=days)
 
 def api_request(method: str, endpoint: str, payload: dict = None):
-    url = f"{config.PANEL_URL}{endpoint}"; headers = {'Authorization': f'Bearer {config.PANEL_API_TOKEN}', 'Accept': 'application/json', 'Content-Type': 'application/json'}
+    url = f"{config.PANEL_URL}{endpoint}"
+    headers = {'Authorization': f'Bearer {config.PANEL_API_TOKEN}', 'Accept': 'application/json', 'Content-Type': 'application/json'}
+    
+    # لاگ کردن تلاش برای ارسال درخواست
+    logger.warning(f"--> API Request: Attempting {method.upper()} to {url}")
+    
     try:
         response = requests.request(method.upper(), url, headers=headers, json=payload, timeout=15)
+        
+        # لاگ کردن کد وضعیت پاسخ دریافتی
+        logger.warning(f"<-- API Response Status: {response.status_code}")
+        
         response.raise_for_status()
         return response.json() if response.status_code != 204 else {}, None
+        
     except requests.exceptions.HTTPError as errh:
-        if errh.response.status_code == 404: return None, "User not found"
-        logger.error(f"Http Error: {errh} - Response: {errh.response.text}"); return None, f"HTTP Error: {errh.response.status_code}"
+        # لاگ کردن خطای HTTP با جزئیات کامل
+        logger.error(f"[!!!] API HTTPError: {errh} | Status Code: {errh.response.status_code} | Response: {errh.response.text}", exc_info=True)
+        if errh.response.status_code == 404:
+            return None, "User not found"
+        return None, f"HTTP Error: {errh.response.status_code}"
+        
     except Exception as e:
-        logger.error(f"An unexpected error occurred: {e}"); return None, "Unknown error"
+        # لاگ کردن هر خطای پیش‌بینی نشده دیگری
+        logger.error(f"[!!!] API Unexpected Error of type {type(e).__name__}: {e}", exc_info=True)
+        return None, "Unknown error"
 
 def generate_qr_code(data: str):
     if not data: return None
@@ -232,7 +248,6 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data['username'] = username_to_fetch
     sent_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('fetching_user_info', context, username=username_to_fetch), parse_mode=ParseMode.HTML)
     data, error = api_request('GET', f'/api/users/by-username/{username_to_fetch}')
-    logger.info(f"--- REMNA PANEL API RESPONSE ---: {data}")
     
     if error:
         await sent_message.edit_text(t('error_fetching', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])); return AWAITING_USERNAME
