@@ -221,21 +221,15 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if action == 'refresh':
         await query.message.delete(); return await show_user_card(update, context)
     if action in ['enable_user', 'disable_user']:
-        action_str = 'enable' if action == 'enable_user' else 'disable'
-        popup_text = t('enabling_user', context) if action_str == 'enable' else t('disabling_user', context)
-        await query.answer(text=popup_text, show_alert=False)
         user_uuid = context.user_data.get('user_uuid')
         if not user_uuid:
-            await query.answer(text="Error: User UUID not found.", show_alert=True)
             return USER_MENU
-        endpoint = f'/api/users/{user_uuid}/actions/{action_str}'
+        endpoint = f'/api/users/{user_uuid}/actions/{"enable" if action == "enable_user" else "disable"}'
         _, error = api_request('POST', endpoint)
         if error:
-            await query.answer(text=f"API Error: {error}", show_alert=True)
+            logger.error(f"API Error during user status change: {error}")
             return USER_MENU
         else:
-            success_text = t('user_enabled_success', context) if action_str == 'enable' else t('user_disabled_success', context)
-            await query.answer(text=success_text, show_alert=False)
             await query.message.delete()
             return await show_user_card(update, context)
     if action == 'show_qr':
