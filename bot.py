@@ -24,7 +24,8 @@ except FileNotFoundError: logger.critical("locales.json not found!"); exit()
 except json.JSONDecodeError: logger.critical("locales.json is not a valid JSON file."); exit()
 
 COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("start", "نمایش منوی اصلی")], 'ru': [BotCommand("start", "Показать главное меню")]}
-MAIN_MENU, SELECTING_LANGUAGE, AWAITING_USERNAME, USER_MENU, AWAITING_LIMIT, AWAITING_EXPIRE, NODE_LIST, VIEWING_LOGS, QR_VIEW, SELECT_NODE_RESTART = range(10)
+# Add a new state for delete confirmation
+MAIN_MENU, SELECTING_LANGUAGE, AWAITING_USERNAME, USER_MENU, AWAITING_LIMIT, AWAITING_EXPIRE, NODE_LIST, VIEWING_LOGS, QR_VIEW, SELECT_NODE_RESTART, CONFIRM_DELETE = range(11)
 
 def get_lang_from_file() -> str:
     try:
@@ -228,6 +229,7 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [InlineKeyboardButton(t('edit_volume_btn', context), callback_data='edit_limit'), InlineKeyboardButton(t('edit_date_btn', context), callback_data='edit_expire')],
         action_buttons,
         [InlineKeyboardButton(t('show_qr_btn', context), callback_data='show_qr'), InlineKeyboardButton(t('get_happ_qr_btn', context), callback_data='get_happ_qr')],
+        [InlineKeyboardButton(t('delete_user_btn', context), callback_data='delete_user')],
         [InlineKeyboardButton(t('refresh_btn', context), callback_data='refresh')],
         [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]
     ]
@@ -241,6 +243,16 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.message.delete(); return await show_user_card(update, context)
     
     user_data = context.user_data.get('user_data', {})
+
+    if action == 'delete_user':
+        username = user_data.get('username')
+        text = t('delete_confirm_prompt', context, username=username)
+        keyboard = [[
+            InlineKeyboardButton(t('confirm_delete_btn', context), callback_data='confirm_delete'),
+            InlineKeyboardButton(t('cancel_delete_btn', context), callback_data='cancel_delete')
+        ]]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        return CONFIRM_DELETE
     
     if action == 'get_happ_qr':
         happ_link = user_data.get('happ', {}).get('cryptoLink')
@@ -293,9 +305,36 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         context.user_data['editing'] = 'expire'; return AWAITING_EXPIRE
     return USER_MENU
 
+async def delete_user_confirmation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    action = query.data
+
+    if action == 'cancel_delete':
+        await query.message.delete()
+        await context.bot.send_message(chat_id=query.message.chat_id, text=t('delete_cancelled', context))
+        return await show_user_card(update, context)
+
+    if action == 'confirm_delete':
+        await query.message.edit_text(t('deleting_user', context))
+        user_uuid = context.user_data.get('user_uuid')
+        if not user_uuid:
+            await query.message.edit_text("Error: User UUID not found.")
+            return await start(update, context)
+
+        _, error = api_request('DELETE', f'/api/users/{user_uuid}')
+
+        if error:
+            await query.message.edit_text(f"❌ Error deleting user: {error}")
+        else:
+            await query.message.edit_text(t('user_deleted_success', context))
+        
+        # In both cases (success or fail), return to the main menu after deletion attempt.
+        return await start(update, context)
+    return USER_MENU
+
 async def back_to_user_info_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer()
-    # Delete the media message and resend the user card
     await query.message.delete()
     return await show_user_card(update, context)
 
@@ -380,7 +419,8 @@ def main() -> None:
             AWAITING_EXPIRE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
             NODE_LIST: [CallbackQueryHandler(logs_node_handler)],
             VIEWING_LOGS: [CallbackQueryHandler(logs_node_handler)],
-            SELECT_NODE_RESTART: [CallbackQueryHandler(restart_node_handler, pattern='^restartnode_'), CallbackQueryHandler(main_menu_handler, pattern='^go_restart_nodes$'), CallbackQueryHandler(start, pattern='^back_to_main$')]
+            SELECT_NODE_RESTART: [CallbackQueryHandler(restart_node_handler, pattern='^restartnode_'), CallbackQueryHandler(main_menu_handler, pattern='^go_restart_nodes$'), CallbackQueryHandler(start, pattern='^back_to_main$')],
+            CONFIRM_DELETE: [CallbackQueryHandler(delete_user_confirmation_handler)]
         },
         fallbacks=[CommandHandler('start', start)], allow_reentry=True
     )
