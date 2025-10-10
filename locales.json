@@ -35,10 +35,14 @@
     "last_update": "🔄 <b>آخرین آپدیت:</b>",
     "not_updated_yet": "تاکنون آپدیت نشده",
     "subscription_link": "🔗 <b>لینک سابسکریپشن:</b>",
+    "happ_crypto_link": "🔗 <b>لینک Happ Crypto:</b>",
     "not_found": "یافت نشد",
     "edit_volume_btn": "✏️ ویرایش حجم",
     "edit_date_btn": "🗓 ویرایش تاریخ",
     "refresh_btn": "🔄 رفرش",
+    "reset_usage_btn": "🔄 ریست کردن حجم",
+    "reseting_usage": "⏳ در حال ریست کردن حجم مصرفی...",
+    "reset_usage_success": "✅ حجم مصرفی کاربر با موفقیت ریست شد",
     "ask_for_new_limit": "مقدار حجم جدید برای <code>{username}</code> را به <b>گیگابایت (GB)</b> وارد کنید:",
     "ask_for_new_expire": "تعداد روزهای اعتبار جدید برای <code>{username}</code> را وارد کنید (مثلاً: 30):",
     "invalid_number": "❌ مقدار نامعتبر. فقط عدد مثبت وارد کنید.",
@@ -61,10 +65,7 @@
     "enabling_user": "⏳ در حال فعال سازی...",
     "disabling_user": "⏳ در حال غیرفعال سازی...",
     "user_enabled_success": "✅ کاربر با موفقیت فعال شد",
-    "user_disabled_success": "✅ کاربر با موفقیت غیرفعال شد",
-    "reset_usage_btn": "🔄 ریست کردن حجم",
-    "reseting_usage": "⏳ در حال ریست کردن حجم مصرفی...",
-    "reset_usage_success": "✅ حجم مصرفی کاربر با موفقیت ریست شد"
+    "user_disabled_success": "✅ کاربر با موفقیت غیرفعال شد"
   },
   "en": {
     "change_language_btn": "🌐 Change Language",
@@ -102,10 +103,14 @@
     "last_update": "🔄 <b>Last Update:</b>",
     "not_updated_yet": "Never",
     "subscription_link": "🔗 <b>Subscription Link:</b>",
+    "happ_crypto_link": "🔗 <b>Happ Crypto Link:</b>",
     "not_found": "Not found",
     "edit_volume_btn": "✏️ Edit Volume",
     "edit_date_btn": "🗓 Edit Date",
     "refresh_btn": "🔄 Refresh",
+    "reset_usage_btn": "🔄 Reset Usage",
+    "reseting_usage": "⏳ Resetting usage...",
+    "reset_usage_success": "✅ User usage reset successfully",
     "ask_for_new_limit": "Enter new volume for <code>{username}</code> in <b>GB</b>:",
     "ask_for_new_expire": "Enter new validity days for <code>{username}</code> (e.g., 30):",
     "invalid_number": "❌ Invalid value. Please enter a positive number.",
@@ -128,10 +133,7 @@
     "enabling_user": "⏳ Enabling user...",
     "disabling_user": "⏳ Disabling user...",
     "user_enabled_success": "✅ User enabled successfully",
-    "user_disabled_success": "✅ User disabled successfully",
-    "reset_usage_btn": "🔄 Reset Usage",
-    "reseting_usage": "⏳ Resetting usage...",
-    "reset_usage_success": "✅ User usage reset successfully"
+    "user_disabled_success": "✅ User disabled successfully"
   },
   "ru": {
     "change_language_btn": "🌐 Сменить язык",
@@ -169,10 +171,14 @@
     "last_update": "🔄 <b>Последнее обновление:</b>",
     "not_updated_yet": "Никогда",
     "subscription_link": "🔗 <b>Ссылка:</b>",
+    "happ_crypto_link": "🔗 <b>Happ Crypto ссылка:</b>",
     "not_found": "Не найдено",
     "edit_volume_btn": "✏️ Изменить объем",
     "edit_date_btn": "🗓 Изменить дату",
     "refresh_btn": "🔄 Обновить",
+    "reset_usage_btn": "🔄 Сбросить трафик",
+    "reseting_usage": "⏳ Сброс трафика...",
+    "reset_usage_success": "✅ Трафик пользователя успешно сброшен",
     "ask_for_new_limit": "Введите новый объем для <code>{username}</code> в <b>ГБ</b>:",
     "ask_for_new_expire": "Введите новое количество дней для <code>{username}</code> (напр. 30):",
     "invalid_number": "❌ Неверное значение. Введите положительное число.",
@@ -195,9 +201,6 @@
     "enabling_user": "⏳ Включение...",
     "disabling_user": "⏳ Отключение...",
     "user_enabled_success": "✅ Пользователь успешно включен",
-    "user_disabled_success": "✅ Пользователь успешно отключен",
-    "reset_usage_btn": "🔄 Сбросить трафик",
-    "reseting_usage": "⏳ Сброс трафика...",
-    "reset_usage_success": "✅ Трафик пользователя успешно сброшен"
+    "user_disabled_success": "✅ Пользователь успешно отключен"
   }
 }
