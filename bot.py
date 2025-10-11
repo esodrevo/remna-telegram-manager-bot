@@ -107,9 +107,24 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
     safe_client_app = html.escape(user_data.get('subLastUserAgent') or t('unknown', context))
     safe_sub_url = html.escape(user_data.get('subscriptionUrl') or t('not_found', context))
     status = t('status_active', context) if user_data.get('status') == 'ACTIVE' else t('status_inactive', context)
+    
     data_limit = user_data.get('trafficLimitBytes')
     data_usage = user_data.get('usedTrafficBytes', 0)
-    remaining_data = data_limit - data_usage if data_limit and data_limit > 0 else 0
+
+    # 1. Format the limit. The original function works correctly here (0 or None is "Unlimited").
+    limit_formatted = format_bytes(data_limit)
+
+    # 2. Format the usage. If usage is 0, display "0.00 B" instead of "Unlimited".
+    usage_formatted = "0.00 B"
+    if data_usage > 0:
+        usage_formatted = format_bytes(data_usage)
+
+    # 3. Format the remaining data.
+    remaining_formatted = t('unlimited', context) # Default for unlimited plans
+    if data_limit is not None and data_limit > 0: # Only calculate if there is a finite limit
+        remaining_bytes = data_limit - data_usage
+        remaining_formatted = format_bytes(remaining_bytes)
+
     expire_dt = parse_iso_date(user_data.get('expireAt'))
     remaining_days, expire_date_fa = (t('unlimited', context), t('unlimited', context))
     if expire_dt:
@@ -122,11 +137,12 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
     sub_last_update_dt = parse_iso_date(user_data.get('subLastOpenedAt'))
     last_update_relative = human_readable_timediff(sub_last_update_dt, context)
     
+    # Use the new formatted variables in the final message
     return (f"{t('user_info_title', context, username=safe_username)}\n\n"
             f"{t('status', context)} {status}\n\n"
-            f"{t('total_limit', context)} {format_bytes(data_limit)}\n"
-            f"{t('usage', context)} {format_bytes(data_usage)}\n"
-            f"{t('remaining_volume', context)} {format_bytes(remaining_data)}\n\n"
+            f"{t('total_limit', context)} {limit_formatted}\n"
+            f"{t('usage', context)} {usage_formatted}\n"
+            f"{t('remaining_volume', context)} {remaining_formatted}\n\n"
             f"{t('expire_date', context)} {expire_date_fa}\n"
             f"{t('remaining_time', context)} {remaining_days}\n\n"
             f"{t('client_software', context)} <code>{safe_client_app}</code>\n"
@@ -711,8 +727,6 @@ def main() -> None:
         ], 
         allow_reentry=True
     )
-    
-    # application.add_handler(CommandHandler('debugapi', debug_api))
     
     application.add_handler(conv_handler)
     logger.info("Bot is running...")
