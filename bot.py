@@ -25,7 +25,7 @@ except json.JSONDecodeError: logger.critical("locales.json is not a valid JSON f
 
 COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("start", "نمایش منوی اصلی")], 'ru': [BotCommand("start", "Показать главное меню")]}
 
-# NEW STATE CONSTANTS for the Add User flow
+# STATE CONSTANTS
 (
     MAIN_MENU, SELECTING_LANGUAGE, AWAITING_USERNAME, USER_MENU, AWAITING_LIMIT,
     AWAITING_EXPIRE, NODE_LIST, VIEWING_LOGS, QR_VIEW, SELECT_NODE_RESTART,
@@ -84,7 +84,6 @@ def api_request(method: str, endpoint: str, payload: dict = None):
     except requests.exceptions.HTTPError as errh:
         error_response = errh.response.text
         try:
-             # Try to parse the error for a more specific message
              error_details = errh.response.json().get('message', error_response)
         except json.JSONDecodeError:
              error_details = error_response
@@ -260,7 +259,7 @@ async def get_data_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         days = int(update.message.text)
-        if days <= 0: raise ValueError
+        if days < 0: raise ValueError # Allow 0 for same-day expiry if needed, but not negative
         expire_date = datetime.now(timezone.utc) + timedelta(days=days)
         context.user_data['new_user_data']['expireAt'] = expire_date.isoformat().replace('+00:00', 'Z')
         
@@ -387,38 +386,51 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         parse_mode=ParseMode.HTML
     )
     
-    # === PAYLOAD FIX STARTS HERE ===
-    # Added "status" and "trafficLimitStrategy" which are required by the API.
+    traffic_limit = new_user_info.get('trafficLimitBytes')
+    hwid_limit = new_user_info.get('hwidDeviceLimit')
+
+    # === PAYLOAD FIX V3 STARTS HERE ===
+    # This version sends all optional fields with default empty values
+    # to perfectly match the strict API documentation.
+    # It also sends 0 for unlimited/disabled values instead of null.
     payload = {
         "username": username,
-        "status": "ACTIVE", # This field was missing
-        "trafficLimitBytes": new_user_info.get('trafficLimitBytes'),
-        "trafficLimitStrategy": "NO_RESET", # This field was missing
+        "status": "ACTIVE",
+        "trafficLimitBytes": traffic_limit,
+        "trafficLimitStrategy": "NO_RESET",
         "expireAt": new_user_info.get('expireAt'),
-        "hwidDeviceLimit": new_user_info.get('hwidDeviceLimit'),
-        "activeInternalSquads": [{"uuid": uuid} for uuid in selected_squad_uuids]
+        "hwidDeviceLimit": hwid_limit,
+        "activeInternalSquads": [{"uuid": uuid} for uuid in selected_squad_uuids],
+        "description": "",
+        "tag": "",
+        "telegramId": "",
+        "email": ""
     }
-    # === PAYLOAD FIX ENDS HERE ===
+    # === PAYLOAD FIX V3 ENDS HERE ===
     
     _, error = api_request('POST', '/api/users', payload=payload)
     
     if error:
+        # === BUTTON FIX STARTS HERE ===
+        # Add a "Back to menu" button directly to the error message
+        # and correctly transition the conversation state back to MAIN_MENU.
+        keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.edit_text(
             t('error_creating_user', context, error=html.escape(error)),
-            parse_mode=ParseMode.HTML
+            parse_mode=ParseMode.HTML,
+            reply_markup=reply_markup
         )
+        return MAIN_MENU
+        # === BUTTON FIX ENDS HERE ===
     else:
         await query.message.edit_text(
             t('user_created_success', context, username=html.escape(username)),
-            parse_mode=ParseMode.HTML
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])
         )
         
     context.user_data.clear()
-    await context.bot.send_message(
-        chat_id=query.message.chat_id,
-        text=".",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])
-    )
     return MAIN_MENU
 
 # END of Add User Functions
