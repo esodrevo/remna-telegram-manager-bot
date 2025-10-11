@@ -363,15 +363,27 @@ async def ask_for_squads_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     keyboard.append([InlineKeyboardButton(t('squad_selection_done_btn', context), callback_data='squad_done')])
     
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    message_text = t('ask_for_squads_prompt', context)
+    chat_id = update.effective_chat.id
+
+    # This is the message that displays the squad list. If it already exists, we edit it.
+    # If it doesn't, we send a new one. This happens when coming from a previous step where the old prompt was deleted.
     prompt_message_id = context.user_data.get('prompt_message_id')
-    if query and not prompt_message_id: # came from previous step
-        sent_message = await context.bot.send_message(chat_id=query.message.chat_id, text=t('ask_for_squads_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    if not prompt_message_id:
+        # First time showing the squad list in this flow (e.g., after entering HWID limit).
+        sent_message = await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup)
         context.user_data['prompt_message_id'] = sent_message.message_id
-    else: # editing selection
+    else:
+        # User is toggling a squad, so just update the existing message's keyboard.
         try:
-             await context.bot.edit_message_reply_markup(chat_id=update.effective_chat.id, message_id=prompt_message_id, reply_markup=InlineKeyboardMarkup(keyboard))
+             await context.bot.edit_message_reply_markup(chat_id=chat_id, message_id=prompt_message_id, reply_markup=reply_markup)
         except BadRequest as e:
             logger.error(f"Error updating squad list: {e}")
+            # As a fallback, if editing fails (e.g., user deleted it), send a new one.
+            sent_message = await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup)
+            context.user_data['prompt_message_id'] = sent_message.message_id
 
     return SELECTING_SQUADS
 
