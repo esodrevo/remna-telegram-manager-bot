@@ -24,8 +24,6 @@ except FileNotFoundError: logger.critical("locales.json not found!"); exit()
 except json.JSONDecodeError: logger.critical("locales.json is not a valid JSON file."); exit()
 
 # Add new translation keys for the final report to locales.json if they don't exist
-# "bulk_update_complete_detailed": "✅ عملیات گروهی تمام شد.\n\nتعداد کاربران موفق: {success_count}\nتعداد کاربران ناموفق: {failed_count}\nتعداد کاربران نادیده گرفته شده: {skipped_count}",
-# "skipped_reason_unlimited": "(طرح نامحدود)"
 LANGUAGES['fa'].setdefault('bulk_update_complete_detailed', "✅ عملیات گروهی تمام شد.\n\n- کاربران موفق: {success_count}\n- کاربران ناموفق: {failed_count}\n- نادیده گرفته شده: {skipped_count} {skipped_reason_unlimited}")
 LANGUAGES['en'].setdefault('bulk_update_complete_detailed', "✅ Bulk update complete.\n\n- Successful: {success_count}\n- Failed: {failed_count}\n- Skipped: {skipped_count} {skipped_reason_unlimited}")
 LANGUAGES['ru'].setdefault('bulk_update_complete_detailed', "✅ Массовое обновление завершено.\n\n- Успешно: {success_count}\n- Ошибки: {failed_count}\n- Пропущено: {skipped_count} {skipped_reason_unlimited}")
@@ -196,13 +194,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     reply_markup = InlineKeyboardMarkup(keyboard)
     message_text = t('main_menu_prompt', context)
     
-    if update.callback_query:
+    # Check if update is a query or a message
+    if hasattr(update, 'callback_query') and update.callback_query:
+        query = update.callback_query
         try:
-            await update.callback_query.message.edit_text(message_text, reply_markup=reply_markup)
-        except BadRequest:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=message_text, reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(text=message_text, reply_markup=reply_markup)
+            await query.message.edit_text(message_text, reply_markup=reply_markup)
+        except BadRequest: # If message is identical or other issues
+            # In case of error, just send a new message
+            await context.bot.send_message(chat_id=query.effective_chat.id, text=message_text, reply_markup=reply_markup)
+    elif hasattr(update, 'message') and update.message:
+         await update.message.reply_text(text=message_text, reply_markup=reply_markup)
+    else: # Fallback for other update types if needed
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=message_text, reply_markup=reply_markup)
+
         
     return MAIN_MENU
 
@@ -359,7 +363,8 @@ async def confirm_bulk_action_handler(update: Update, context: ContextTypes.DEFA
     user_count = len(context.user_data.get('bulk_users_list', []))
     await query.message.edit_text(t('bulk_update_started', context, user_count=user_count), parse_mode=ParseMode.HTML)
     
-    job_context = {
+    # ***MODIFICATION START: Use application.create_task instead of JobQueue***
+    background_task_data = {
         'chat_id': update.effective_chat.id,
         'lang': get_lang(context),
         'languages_dict': LANGUAGES,
@@ -368,25 +373,28 @@ async def confirm_bulk_action_handler(update: Update, context: ContextTypes.DEFA
         'bulk_change_value': context.user_data['bulk_change_value']
     }
     
-    context.job_queue.run_once(bulk_update_job, 1, context=job_context, name=f"bulk_update_{update.effective_chat.id}")
+    context.application.create_task(
+        run_bulk_update_background(context.application, background_task_data),
+        update=update # Pass update to get more robust error reporting
+    )
+    # ***MODIFICATION END***
     
     return ConversationHandler.END
 
-async def bulk_update_job(context: ContextTypes.DEFAULT_TYPE):
-    job_data = context.job.context
-    chat_id = job_data['chat_id']
+async def run_bulk_update_background(application: Application, task_data: dict):
+    chat_id = task_data['chat_id']
     
-    lang = job_data['lang']
-    languages_dict = job_data['languages_dict']
+    lang = task_data['lang']
+    languages_dict = task_data['languages_dict']
     
     def job_t(key, **kwargs):
         return languages_dict.get(lang, languages_dict['en']).get(key, key).format(**kwargs)
 
     try:
-        logger.info(f"Starting bulk update job for chat_id: {chat_id}")
-        users = job_data['bulk_users_list']
-        edit_type = job_data['bulk_edit_type']
-        change_value = job_data['bulk_change_value']
+        logger.info(f"BACKGROUND TASK: Starting bulk update for chat_id: {chat_id}")
+        users = task_data['bulk_users_list']
+        edit_type = task_data['bulk_edit_type']
+        change_value = task_data['bulk_change_value']
         
         success_count = 0
         failed_count = 0
@@ -439,22 +447,22 @@ async def bulk_update_job(context: ContextTypes.DEFAULT_TYPE):
                     success_count += 1
                     logger.info(f"Bulk update SUCCEEDED for user {username}.")
 
-        logger.info(f"Bulk update job finished. Success: {success_count}, Failed: {failed_count}, Skipped: {skipped_count}")
+        logger.info(f"BACKGROUND TASK finished. Success: {success_count}, Failed: {failed_count}, Skipped: {skipped_count}")
         final_message = job_t('bulk_update_complete_detailed', 
                               success_count=success_count, 
                               failed_count=failed_count, 
                               skipped_count=skipped_count,
                               skipped_reason_unlimited=job_t('skipped_reason_unlimited'))
-        await context.bot.send_message(chat_id=chat_id, text=final_message)
+        await application.bot.send_message(chat_id=chat_id, text=final_message)
 
     except Exception as e:
-        logger.error(f"FATAL ERROR in bulk_update_job for chat_id {chat_id}: {e}", exc_info=True)
-        error_message = f"❌ An unexpected error occurred during the bulk update process. Please check the bot logs for details.\n\n`{e}`"
-        await context.bot.send_message(chat_id=chat_id, text=error_message, parse_mode=ParseMode.MARKDOWN)
+        logger.error(f"FATAL ERROR in background task for chat_id {chat_id}: {e}", exc_info=True)
+        error_message = f"❌ یک خطای پیش‌بینی نشده در حین عملیات گروهی رخ داد. لطفاً لاگ‌های ربات را بررسی کنید.\n\n`{e}`"
+        await application.bot.send_message(chat_id=chat_id, text=error_message, parse_mode=ParseMode.MARKDOWN)
 
 # --- End of Bulk Edit Feature ---
 
-
+# ... (Rest of the file is unchanged) ...
 async def get_new_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['new_user_data']['username'] = update.message.text
     try:
