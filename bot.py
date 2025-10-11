@@ -687,7 +687,7 @@ def main() -> None:
             AWAITING_NEW_EXPIRE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_new_expire)],
             AWAITING_HWID_CHOICE: [CallbackQueryHandler(handle_hwid_choice)],
             AWAITING_HWID_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_hwid_limit)],
-            SELECTING_SQUADS: [CallbackQueryHandler(handle_squad_selection, pattern='^squad_')],
+            SELECTING_SQUADS: [CallbackQueryHandler(handle_squad_selection)],
         },
         fallbacks=[CommandHandler('start', start)], allow_reentry=True
     )
