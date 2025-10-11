@@ -390,6 +390,9 @@ def build_user_created_message(response_data: dict, context: ContextTypes.DEFAUL
              expire_date=expire_date, 
              sub_link=sub_link)
 
+# ======================================================================
+# ========= vvvvvvvvvvv THE MODIFIED FUNCTION IS HERE vvvvvvvvvvv ========
+# ======================================================================
 async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     new_user_info = context.user_data.get('new_user_data', {})
@@ -397,6 +400,7 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     
     username = new_user_info.get('username')
     
+    # Show "Creating user..." message
     await query.message.edit_text(
         t('creating_user', context, username=username),
         parse_mode=ParseMode.HTML
@@ -424,34 +428,29 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     
     data, error = api_request('POST', '/api/users', payload=payload)
     
-    # BUG FIX: Delete the "Creating user..." message before sending the result
-    try:
-        await query.message.delete()
-    except BadRequest: pass
-
+    # Define the "Back to Main Menu" button
     keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    chat_id = query.message.chat_id
 
+    # Prepare the message text based on the result
     if error:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=t('error_creating_user', context, error=html.escape(error)),
-            parse_mode=ParseMode.HTML,
-            reply_markup=reply_markup
-        )
+        message_text = t('error_creating_user', context, error=html.escape(error))
     else:
-        success_message = build_user_created_message(data.get('response', {}), context)
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=success_message,
-            parse_mode=ParseMode.HTML,
-            reply_markup=reply_markup
-        )
+        message_text = build_user_created_message(data.get('response', {}), context)
+
+    # Instead of deleting and sending, we edit the same message
+    await query.message.edit_text(
+        text=message_text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=reply_markup
+    )
         
     context.user_data.clear()
     return MAIN_MENU
-# ... (rest of the file remains unchanged) ...
+# ======================================================================
+# ========= ^^^^^^^^^^^ THE MODIFIED FUNCTION IS HERE ^^^^^^^^^^^ ========
+# ======================================================================
+
 async def set_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer()
     lang_code = query.data.split('_')[-1]
