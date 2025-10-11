@@ -85,6 +85,7 @@ def human_readable_timediff(dt: datetime, context: ContextTypes.DEFAULT_TYPE):
     return t('days_ago', context, days=days)
 
 def api_request(method: str, endpoint: str, payload: dict = None):
+    # This is a SYNCHRONOUS/BLOCKING function
     url = f"{config.PANEL_URL}{endpoint}"; headers = {'Authorization': f'Bearer {config.PANEL_API_TOKEN}', 'Accept': 'application/json', 'Content-Type': 'application/json'}
     try:
         response = requests.request(method.upper(), url, headers=headers, json=payload, timeout=15)
@@ -193,7 +194,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     reply_markup = InlineKeyboardMarkup(keyboard)
     message_text = t('main_menu_prompt', context)
     
-    # Check if update is a query or a message
     if hasattr(update, 'callback_query') and update.callback_query:
         query = update.callback_query
         try:
@@ -234,7 +234,7 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.message.edit_text(text="⏳ در حال دریافت آخرین کاربر...")
         
         last_username = "N/A"
-        users_data, error = api_request('GET', '/api/users')
+        users_data, error = await asyncio.to_thread(api_request, 'GET', '/api/users')
         
         if not error and users_data and 'response' in users_data:
             response_obj = users_data.get('response')
@@ -321,7 +321,9 @@ async def process_bulk_change_value(update: Update, context: ContextTypes.DEFAUL
 
     await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=prompt_message_id, text=t('fetching_all_users', context))
 
-    users_data, error = api_request('GET', '/api/users')
+    # Also run this in a thread to avoid blocking
+    users_data, error = await asyncio.to_thread(api_request, 'GET', '/api/users')
+
     if error or 'response' not in users_data or 'users' not in users_data['response']:
         await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=prompt_message_id, text=t('error_fetching_all_users', context, error=error))
         return MAIN_MENU
@@ -396,10 +398,6 @@ async def run_bulk_update_background(task_data: dict):
         skipped_count = 0
         
         for user in users:
-            # ***THE FIX IS HERE: Add a delay to prevent API rate-limiting***
-            await asyncio.sleep(0.5) 
-            # ***END OF FIX***
-
             user_uuid = user.get('uuid')
             username = user.get('username', 'N/A')
             
@@ -438,7 +436,13 @@ async def run_bulk_update_background(task_data: dict):
             
             if payload:
                 logger.info(f"Updating user {username} ({user_uuid}) with payload: {payload}")
-                _, error = api_request('PATCH', f'/api/users/{user_uuid}', payload=payload)
+                
+                # *** THE FIX IS HERE: Run the blocking request in a separate thread ***
+                _, error = await asyncio.to_thread(
+                    api_request, 'PATCH', f'/api/users/{user_uuid}', payload=payload
+                )
+                # *** END OF FIX ***
+                
                 if error:
                     failed_count += 1
                     logger.error(f"Bulk update FAILED for user {username}: {error}")
@@ -460,7 +464,6 @@ async def run_bulk_update_background(task_data: dict):
         await bot.send_message(chat_id=chat_id, text=error_message, parse_mode=ParseMode.MARKDOWN)
 
 # --- End of Bulk Edit Feature ---
-
 
 async def get_new_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['new_user_data']['username'] = update.message.text
@@ -549,7 +552,7 @@ async def get_hwid_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return AWAITING_HWID_VALUE
 
 async def fetch_and_show_squads(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int) -> int:
-    squads_data, error = api_request('GET', '/api/internal-squads')
+    squads_data, error = await asyncio.to_thread(api_request, 'GET', '/api/internal-squads')
     
     if error or not squads_data or 'response' not in squads_data or 'internalSquads' not in squads_data['response']:
         await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=message_id, text=t('fetching_squads_error', context))
@@ -658,7 +661,7 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         "activeInternalSquads": selected_squad_uuids
     }
     
-    data, error = api_request('POST', '/api/users', payload=payload)
+    data, error = await asyncio.to_thread(api_request, 'POST', '/api/users', payload=payload)
     
     keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -699,7 +702,9 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not username_to_fetch: return await start(update, context)
     context.user_data['username'] = username_to_fetch
     sent_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('fetching_user_info', context, username=username_to_fetch), parse_mode=ParseMode.HTML)
-    data, error = api_request('GET', f'/api/users/by-username/{username_to_fetch}')
+    
+    data, error = await asyncio.to_thread(api_request, 'GET', f'/api/users/by-username/{username_to_fetch}')
+
     if error:
         await sent_message.edit_text(t('error_fetching', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])); return AWAITING_USERNAME
     user_data = data.get('response', {});
@@ -760,7 +765,7 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         user_uuid = context.user_data.get('user_uuid')
         if not user_uuid: await query.answer(text="Error: User UUID not found.", show_alert=True); return USER_MENU
         endpoint = f'/api/users/{user_uuid}/actions/{action_str}'
-        _, error = api_request('POST', endpoint)
+        _, error = await asyncio.to_thread(api_request, 'POST', endpoint)
         if error: await query.answer(text=f"API Error: {error}", show_alert=True)
         else:
             await query.answer(text=success_text, show_alert=False)
@@ -799,9 +804,9 @@ async def delete_user_confirmation_handler(update: Update, context: ContextTypes
         user_uuid = context.user_data.get('user_uuid')
         username = context.user_data.get('username', '')
         
-        await query.message.edit_text(f"⏳ Deleting user {username}...")
+        await query.message.edit_text(f"⏳ در حال حذف کاربر {username}...")
         
-        _, error = api_request('DELETE', f'/api/users/{user_uuid}')
+        _, error = await asyncio.to_thread(api_request, 'DELETE', f'/api/users/{user_uuid}')
         
         final_text = ""
         if error:
@@ -837,7 +842,7 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return AWAITING_LIMIT
 
     user_uuid = context.user_data.get('user_uuid')
-    _, error = api_request('PATCH', f'/api/users/{user_uuid}', payload=payload)
+    _, error = await asyncio.to_thread(api_request, 'PATCH', f'/api/users/{user_uuid}', payload=payload)
     if error: 
         msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('update_failed', context, error=error))
         context.job_queue.run_once(lambda j: j.context.delete(), 5, context=msg)
@@ -850,7 +855,8 @@ async def logs_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     
     await query.message.edit_text(text=t('fetching_logs', context, node_name=node_name), parse_mode=ParseMode.HTML)
     
-    logs, error = get_logs_from_node(node_name); MAX_LOG_LENGTH = 3800
+    logs, error = await asyncio.to_thread(get_logs_from_node, node_name)
+    MAX_LOG_LENGTH = 3800
     if logs and len(logs) > MAX_LOG_LENGTH: logs = f"...\n{logs[-MAX_LOG_LENGTH:]}"
     if error:
         message_text = t('error_fetching_logs', context, node_name=node_name, details=html.escape(str(error or "")))
@@ -867,24 +873,35 @@ async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query; await query.answer()
     node_name = query.data.split('_')[1]
     await query.message.edit_text(t('restarting_node', context, node_name=node_name), parse_mode=ParseMode.HTML)
-    node_config = config.NODES.get(node_name)
-    output, error = "", ""
-    if node_config['type'] == 'local':
-        command = "cd /opt/remnanode && docker compose down && docker compose up -d && sleep 5 && docker compose logs --tail=20"
-        try:
-            result = subprocess.run(command, shell=True, capture_output=True, text=True, check=True, encoding='utf-8')
-            output = result.stdout.strip()
-        except subprocess.CalledProcessError as e: error = e.stderr.strip()
-    elif node_config['type'] == 'remote':
-        try:
-            parsed_url = urlparse(node_config.get('url', '')); ip = parsed_url.hostname
-            if ip:
-                restart_url = f"http://{ip}:5555/restart"; headers = {'Authorization': f"Bearer {node_config['token']}"}
-                response = requests.post(restart_url, headers=headers, timeout=90); response.raise_for_status()
-                data = response.json(); output = data.get('logs')
-                if data.get('status') != 'success': error = data.get('details', 'Unknown remote error')
-            else: error = "Could not parse IP from node URL."
-        except Exception as e: error = str(e)
+    
+    # This function uses subprocess which is blocking, so it must run in a thread
+    def run_restart():
+        node_config = config.NODES.get(node_name)
+        output, error = "", ""
+        if not node_config:
+            return "", "Node not found in config"
+            
+        if node_config['type'] == 'local':
+            command = "cd /opt/remnanode && docker compose down && docker compose up -d && sleep 5 && docker compose logs --tail=20"
+            try:
+                result = subprocess.run(command, shell=True, capture_output=True, text=True, check=True, encoding='utf-8')
+                output = result.stdout.strip()
+            except subprocess.CalledProcessError as e: error = e.stderr.strip()
+        elif node_config['type'] == 'remote':
+            try:
+                # requests is also blocking, so it's fine inside this threaded function
+                parsed_url = urlparse(node_config.get('url', '')); ip = parsed_url.hostname
+                if ip:
+                    restart_url = f"http://{ip}:5555/restart"; headers = {'Authorization': f"Bearer {node_config['token']}"}
+                    response = requests.post(restart_url, headers=headers, timeout=90); response.raise_for_status()
+                    data = response.json(); output = data.get('logs')
+                    if data.get('status') != 'success': error = data.get('details', 'Unknown remote error')
+                else: error = "Could not parse IP from node URL."
+            except Exception as e: error = str(e)
+        return output, error
+
+    output, error = await asyncio.to_thread(run_restart)
+
     if error: message_text = f"{t('node_restart_failed', context, node_name=node_name)}\n\n<pre><code>{html.escape(error)}</code></pre>"
     else: message_text = f"{t('node_restart_success', context, node_name=node_name)}\n\n<b>{t('logs_title', context, node_name=node_name)}</b>\n<pre><code>{html.escape(output)}</code></pre>"
     keyboard = [[InlineKeyboardButton(t('back_to_restart_list_btn', context), callback_data='go_restart_nodes')]]
