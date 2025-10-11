@@ -342,49 +342,52 @@ async def handle_hwid_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def ask_for_squads_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    if query: await query.answer()
+    chat_id = update.effective_chat.id
 
-    if 'selected_squads' not in context.user_data['new_user']:
+    # If this is a button press, answer the callback query
+    if query:
+        await query.answer()
+
+    # Initialize squad list in user_data if not present
+    if 'selected_squads' not in context.user_data.get('new_user', {}):
         context.user_data['new_user']['selected_squads'] = []
 
+    # Fetch squads from API
     data, error = api_request('GET', '/api/internal-squads')
     if error:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=t('error_squad_fetch', context, error=error))
+        await context.bot.send_message(chat_id=chat_id, text=t('error_squad_fetch', context, error=error))
         return await start(update, context)
     
+    # Build the keyboard based on current selection
     squads = data.get('response', [])
     keyboard = []
+    selected_squads = context.user_data['new_user']['selected_squads']
     for squad in squads:
         squad_name = squad.get('name')
         squad_uuid = squad.get('uuid')
-        is_selected = squad_uuid in context.user_data['new_user']['selected_squads']
+        is_selected = squad_uuid in selected_squads
         button_text = f"✅ {squad_name}" if is_selected else squad_name
         keyboard.append([InlineKeyboardButton(button_text, callback_data=f"squad_{squad_uuid}")])
 
     keyboard.append([InlineKeyboardButton(t('squad_selection_done_btn', context), callback_data='squad_done')])
-    
     reply_markup = InlineKeyboardMarkup(keyboard)
     message_text = t('ask_for_squads_prompt', context)
-    chat_id = update.effective_chat.id
 
-    # This is the message that displays the squad list. If it already exists, we edit it.
-    # If it doesn't, we send a new one. This happens when coming from a previous step where the old prompt was deleted.
-    prompt_message_id = context.user_data.get('prompt_message_id')
-    
-    if not prompt_message_id:
-        # First time showing the squad list in this flow (e.g., after entering HWID limit).
-        sent_message = await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup)
-        context.user_data['prompt_message_id'] = sent_message.message_id
-    else:
-        # User is toggling a squad, so just update the existing message's keyboard.
+    # Decide whether to send a new message or edit an existing one
+    if query:
+        # We are in a callback query context (e.g., toggling a squad or coming from HWID choice buttons),
+        # so we EDIT the existing message.
         try:
-             await context.bot.edit_message_reply_markup(chat_id=chat_id, message_id=prompt_message_id, reply_markup=reply_markup)
+            await query.edit_message_text(text=message_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
         except BadRequest as e:
-            logger.error(f"Error updating squad list: {e}")
-            # As a fallback, if editing fails (e.g., user deleted it), send a new one.
-            sent_message = await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup)
-            context.user_data['prompt_message_id'] = sent_message.message_id
-
+            logger.error(f"Error editing squad message: {e}")
+    else:
+        # We are in a message handler context (coming from entering the HWID limit number),
+        # so we SEND a new message because the previous prompt has been deleted.
+        sent_message = await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+        # Store the ID of this new message so we can edit it later when buttons are pressed
+        context.user_data['prompt_message_id'] = sent_message.message_id
+    
     return SELECTING_SQUADS
 
 async def handle_squad_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
