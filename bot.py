@@ -1,6 +1,6 @@
-# bot.py (نسخه نهایی با Payload کاملاً منطبق بر مستندات دقیق)
+# bot.py (نسخه نهایی با تولید مقادیر مورد نیاز پنل)
 
-import logging, requests, json, subprocess, html, io
+import logging, requests, json, subprocess, html, io, uuid, random, string
 from urllib.parse import urlparse
 from datetime import datetime, timezone, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, InputMediaPhoto
@@ -365,7 +365,12 @@ async def squad_selection_handler(update: Update, context: ContextTypes.DEFAULT_
         await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
     except BadRequest: pass
     return SELECTING_SQUADS
-    
+
+def generate_random_string(length):
+    """Generates a random string of fixed length."""
+    letters_and_digits = string.ascii_letters + string.digits
+    return ''.join(random.choice(letters_and_digits) for i in range(length))
+
 async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     new_user_info = context.user_data.get('new_user_data', {})
@@ -381,22 +386,22 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     hwid_limit = new_user_info.get('hwidDeviceLimit')
 
     # === PAYLOAD FIX (FINAL VERSION) STARTS HERE ===
-    # This version matches the latest documentation screenshot exactly.
+    # This version generates all required random values for the panel.
     payload = {
         "username": username,
         "status": "ACTIVE",
-        "trojanPassword": "",   # Added this required field
-        "vlessUuid": "",        # Added this required field
-        "ssPassword": "",       # Added this required field
+        "trojanPassword": generate_random_string(10),
+        "vlessUuid": str(uuid.uuid4()),
+        "ssPassword": generate_random_string(10),
         "trafficLimitBytes": traffic_limit,
         "trafficLimitStrategy": "NO_RESET",
         "expireAt": new_user_info.get('expireAt'),
         "description": "",
-        "tag": "",
-        "email": "",
-        "telegramId": 0,        # Changed type from "" to 0
+        "tag": generate_random_string(8).upper(),
+        "email": f"{username}@placeholder.com",
+        "telegramId": 0,
         "hwidDeviceLimit": hwid_limit,
-        "activeInternalSquads": selected_squad_uuids # Changed from list of objects to list of strings
+        "activeInternalSquads": selected_squad_uuids
     }
     # === PAYLOAD FIX (FINAL VERSION) ENDS HERE ===
     
