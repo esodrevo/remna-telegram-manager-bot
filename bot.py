@@ -85,7 +85,6 @@ def human_readable_timediff(dt: datetime, context: ContextTypes.DEFAULT_TYPE):
     return t('days_ago', context, days=days)
 
 def api_request(method: str, endpoint: str, payload: dict = None):
-    # This is a SYNCHRONOUS/BLOCKING function
     url = f"{config.PANEL_URL}{endpoint}"; headers = {'Authorization': f'Bearer {config.PANEL_API_TOKEN}', 'Accept': 'application/json', 'Content-Type': 'application/json'}
     try:
         response = requests.request(method.upper(), url, headers=headers, json=payload, timeout=15)
@@ -98,7 +97,7 @@ def api_request(method: str, endpoint: str, payload: dict = None):
         except json.JSONDecodeError:
              error_details = error_response
 
-        if errh.response.status_code == 404: return None, "User not found"
+        if errh.response.status_code == 404: return None, "Endpoint or User not found"
         logger.error(f"Http Error: {errh} - Response: {error_details}"); return None, f"HTTP Error {errh.response.status_code}: {error_details}"
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}"); return None, "Unknown error"
@@ -321,7 +320,6 @@ async def process_bulk_change_value(update: Update, context: ContextTypes.DEFAUL
 
     await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=prompt_message_id, text=t('fetching_all_users', context))
 
-    # Also run this in a thread to avoid blocking
     users_data, error = await asyncio.to_thread(api_request, 'GET', '/api/users')
 
     if error or 'response' not in users_data or 'users' not in users_data['response']:
@@ -407,6 +405,9 @@ async def run_bulk_update_background(task_data: dict):
                 continue
             
             payload = {}
+            # ***THE FIX IS HERE: Add 'uuid' to the payload***
+            payload['uuid'] = user_uuid
+            
             if edit_type == 'volume':
                 current_limit = user.get('trafficLimitBytes')
                 if current_limit is None or current_limit == 0:
@@ -416,7 +417,7 @@ async def run_bulk_update_background(task_data: dict):
                 
                 bytes_to_change = int(change_value * (1024**3))
                 new_limit = current_limit + bytes_to_change
-                payload = {'trafficLimitBytes': max(0, new_limit)}
+                payload['trafficLimitBytes'] = max(0, new_limit)
             
             elif edit_type == 'date':
                 current_expire_str = user.get('expireAt')
@@ -432,16 +433,15 @@ async def run_bulk_update_background(task_data: dict):
                     continue
                 
                 new_expire_dt = current_expire_dt + timedelta(days=int(change_value))
-                payload = {'expireAt': new_expire_dt.isoformat().replace('+00:00', 'Z')}
+                payload['expireAt'] = new_expire_dt.isoformat().replace('+00:00', 'Z')
             
-            if payload:
+            if payload and len(payload) > 1: # Ensure we have something to update besides the uuid
                 logger.info(f"Updating user {username} ({user_uuid}) with payload: {payload}")
                 
-                # *** THE FIX IS HERE: Run the blocking request in a separate thread ***
+                # ***THE FIX IS HERE: Use the correct endpoint and run in a thread***
                 _, error = await asyncio.to_thread(
-                    api_request, 'PATCH', f'/api/users/{user_uuid}', payload=payload
+                    api_request, 'PATCH', '/api/users', payload=payload
                 )
-                # *** END OF FIX ***
                 
                 if error:
                     failed_count += 1
@@ -449,6 +449,11 @@ async def run_bulk_update_background(task_data: dict):
                 else:
                     success_count += 1
                     logger.info(f"Bulk update SUCCEEDED for user {username}.")
+            else:
+                 # This case handles skipped users (e.g. unlimited ones)
+                 # We already logged it, so we just continue
+                 pass
+
 
         logger.info(f"BACKGROUND TASK finished. Success: {success_count}, Failed: {failed_count}, Skipped: {skipped_count}")
         final_message = job_t('bulk_update_complete_detailed', 
@@ -464,6 +469,7 @@ async def run_bulk_update_background(task_data: dict):
         await bot.send_message(chat_id=chat_id, text=error_message, parse_mode=ParseMode.MARKDOWN)
 
 # --- End of Bulk Edit Feature ---
+
 
 async def get_new_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['new_user_data']['username'] = update.message.text
@@ -829,20 +835,25 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await update.message.delete()
     except BadRequest: pass
 
-    if not context.user_data.get('user_uuid'): return await start(update, context)
-    payload = {}
+    user_uuid = context.user_data.get('user_uuid')
+    if not user_uuid: return await start(update, context)
+    
+    # ***THE FIX IS HERE: Add 'uuid' to the payload for single-user edit***
+    payload = {'uuid': user_uuid}
+
     try:
         if context.user_data.get('editing') == 'limit':
-            new_limit_gb = float(update.message.text); payload = {"trafficLimitBytes": int(new_limit_gb * 1024**3)}
+            new_limit_gb = float(update.message.text); payload["trafficLimitBytes"] = int(new_limit_gb * 1024**3)
         elif context.user_data.get('editing') == 'expire':
-            days = int(update.message.text); payload = {"expireAt": (datetime.now(timezone.utc) + timedelta(days=days)).isoformat().replace('+00:00', 'Z')}
+            days = int(update.message.text); payload["expireAt"] = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat().replace('+00:00', 'Z')
     except (ValueError, TypeError):
         msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('invalid_number', context))
         context.job_queue.run_once(lambda j: j.context.delete(), 5, context=msg)
         return AWAITING_LIMIT
 
-    user_uuid = context.user_data.get('user_uuid')
-    _, error = await asyncio.to_thread(api_request, 'PATCH', f'/api/users/{user_uuid}', payload=payload)
+    # ***THE FIX IS HERE: Use the correct endpoint for single-user edit***
+    _, error = await asyncio.to_thread(api_request, 'PATCH', '/api/users', payload=payload)
+    
     if error: 
         msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('update_failed', context, error=error))
         context.job_queue.run_once(lambda j: j.context.delete(), 5, context=msg)
@@ -874,7 +885,6 @@ async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     node_name = query.data.split('_')[1]
     await query.message.edit_text(t('restarting_node', context, node_name=node_name), parse_mode=ParseMode.HTML)
     
-    # This function uses subprocess which is blocking, so it must run in a thread
     def run_restart():
         node_config = config.NODES.get(node_name)
         output, error = "", ""
@@ -889,7 +899,6 @@ async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             except subprocess.CalledProcessError as e: error = e.stderr.strip()
         elif node_config['type'] == 'remote':
             try:
-                # requests is also blocking, so it's fine inside this threaded function
                 parsed_url = urlparse(node_config.get('url', '')); ip = parsed_url.hostname
                 if ip:
                     restart_url = f"http://{ip}:5555/restart"; headers = {'Authorization': f"Bearer {node_config['token']}"}
