@@ -360,9 +360,8 @@ async def confirm_bulk_action_handler(update: Update, context: ContextTypes.DEFA
     user_count = len(context.user_data.get('bulk_users_list', []))
     await query.message.edit_text(t('bulk_update_started', context, user_count=user_count), parse_mode=ParseMode.HTML)
     
-    # ***MODIFICATION START: Use asyncio.create_task for a robust background job***
     background_task_data = {
-        'bot_token': config.TELEGRAM_BOT_TOKEN, # Pass the token
+        'bot_token': config.TELEGRAM_BOT_TOKEN,
         'chat_id': update.effective_chat.id,
         'lang': get_lang(context),
         'languages_dict': LANGUAGES,
@@ -373,19 +372,13 @@ async def confirm_bulk_action_handler(update: Update, context: ContextTypes.DEFA
     
     logger.info("Scheduling background task with asyncio.create_task")
     asyncio.create_task(run_bulk_update_background(background_task_data))
-    # ***MODIFICATION END***
     
     return ConversationHandler.END
 
 async def run_bulk_update_background(task_data: dict):
-    # This function now runs completely independent of the bot's context
-    bot_token = task_data['bot_token']
-    chat_id = task_data['chat_id']
-    
-    # A standalone bot instance for sending the final message
     from telegram import Bot
-    bot = Bot(token=bot_token)
-
+    bot = Bot(token=task_data['bot_token'])
+    chat_id = task_data['chat_id']
     lang = task_data['lang']
     languages_dict = task_data['languages_dict']
     
@@ -403,6 +396,10 @@ async def run_bulk_update_background(task_data: dict):
         skipped_count = 0
         
         for user in users:
+            # ***THE FIX IS HERE: Add a delay to prevent API rate-limiting***
+            await asyncio.sleep(0.5) 
+            # ***END OF FIX***
+
             user_uuid = user.get('uuid')
             username = user.get('username', 'N/A')
             
