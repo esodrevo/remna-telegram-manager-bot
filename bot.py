@@ -311,8 +311,7 @@ async def delete_user_confirmation_handler(update: Update, context: ContextTypes
     action = query.data
 
     if action == 'cancel_delete':
-        await query.message.delete()
-        # await context.bot.send_message(chat_id=query.message.chat_id, text=t('delete_cancelled', context))
+        await query.message.edit_text(t('delete_cancelled', context))
         return await show_user_card(update, context)
 
     if action == 'confirm_delete':
