@@ -1,4 +1,4 @@
-# bot.py (نسخه نهایی با تولید مقادیر مورد نیاز پنل)
+# bot.py
 
 import logging, requests, json, subprocess, html, io, uuid, random, string
 from urllib.parse import urlparse
@@ -54,7 +54,7 @@ def is_admin(update: Update) -> bool:
     return update.effective_user.id == config.ADMIN_USER_ID
 
 def format_bytes(byte_count):
-    if byte_count is None or byte_count <= 0: return "0 GB"
+    if byte_count is None or byte_count <= 0: return "نامحدود" if get_lang_from_file() == 'fa' else "Unlimited"
     power=1024; n=0; labels={0:' B',1:' KB',2:' MB',3:' GB'}
     while byte_count >= power and n < 3: byte_count /= power; n += 1
     return f"{byte_count:.2f}{labels[n]}"
@@ -107,9 +107,9 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
     safe_client_app = html.escape(user_data.get('subLastUserAgent') or t('unknown', context))
     safe_sub_url = html.escape(user_data.get('subscriptionUrl') or t('not_found', context))
     status = t('status_active', context) if user_data.get('status') == 'ACTIVE' else t('status_inactive', context)
-    data_limit = user_data.get('trafficLimitBytes', 0)
+    data_limit = user_data.get('trafficLimitBytes')
     data_usage = user_data.get('usedTrafficBytes', 0)
-    remaining_data = data_limit - data_usage if data_limit > 0 else 0
+    remaining_data = data_limit - data_usage if data_limit and data_limit > 0 else 0
     expire_dt = parse_iso_date(user_data.get('expireAt'))
     remaining_days, expire_date_fa = (t('unlimited', context), t('unlimited', context))
     if expire_dt:
@@ -288,7 +288,9 @@ async def hwid_option_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if action == 'hwid_disable':
         context.user_data['new_user_data']['hwidDeviceLimit'] = 0
-        return await fetch_and_show_squads(update, context)
+        # BUG FIX: Edit the message to show a loading state before fetching squads
+        await query.message.edit_text(t('fetching_squads_prompt', context))
+        return await fetch_and_show_squads(update, context, message_id=query.message.message_id)
     
     elif action == 'hwid_set_value':
         await query.message.edit_text(t('ask_for_hwid_value', context))
@@ -300,31 +302,35 @@ async def get_hwid_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if limit <= 0: raise ValueError
         context.user_data['new_user_data']['hwidDeviceLimit'] = limit
         await update.message.delete()
-        await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=context.user_data.get('prompt_message_id'))
-        return await fetch_and_show_squads(update, context)
+        # BUG FIX: Re-use the existing message to show the loading state
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=context.user_data.get('prompt_message_id'),
+            text=t('fetching_squads_prompt', context)
+        )
+        return await fetch_and_show_squads(update, context, message_id=context.user_data.get('prompt_message_id'))
     except (ValueError, TypeError):
         msg = await update.message.reply_text(t('invalid_number', context))
         context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
         return AWAITING_HWID_VALUE
 
-async def fetch_and_show_squads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def fetch_and_show_squads(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int) -> int:
     squads_data, error = api_request('GET', '/api/internal-squads')
     
-    query = update.callback_query
-    chat_id = update.effective_chat.id
-    
-    prompt_message = await context.bot.send_message(chat_id=chat_id, text=t('select_squads_prompt', context))
-    context.user_data['prompt_message_id'] = prompt_message.message_id
-
     if error or not squads_data or 'response' not in squads_data or 'internalSquads' not in squads_data['response']:
-        await prompt_message.edit_text(t('fetching_squads_error', context))
+        await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=message_id, text=t('fetching_squads_error', context))
         return await start(update, context)
     
     context.user_data['available_squads'] = squads_data['response']['internalSquads']
     context.user_data['selected_squads'] = set() 
 
     keyboard = build_squad_keyboard(context)
-    await prompt_message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+    await context.bot.edit_message_text(
+        chat_id=update.effective_chat.id,
+        message_id=message_id,
+        text=t('select_squads_prompt', context),
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
     return SELECTING_SQUADS
 
 def build_squad_keyboard(context: ContextTypes.DEFAULT_TYPE) -> list:
@@ -367,9 +373,24 @@ async def squad_selection_handler(update: Update, context: ContextTypes.DEFAULT_
     return SELECTING_SQUADS
 
 def generate_random_string(length):
-    """Generates a random string of fixed length."""
     letters_and_digits = string.ascii_letters + string.digits
     return ''.join(random.choice(letters_and_digits) for i in range(length))
+
+def build_user_created_message(response_data: dict, context: ContextTypes.DEFAULT_TYPE) -> str:
+    username = html.escape(response_data.get('username', ''))
+    limit = format_bytes(response_data.get('trafficLimitBytes'))
+    sub_link = html.escape(response_data.get('subscriptionUrl', t('not_found', context)))
+    
+    expire_date = t('unlimited', context)
+    expire_dt = parse_iso_date(response_data.get('expireAt'))
+    if expire_dt:
+        expire_date = expire_dt.strftime("%Y/%m/%d")
+
+    return t('user_created_success_detailed', context, 
+             username=username, 
+             limit=limit, 
+             expire_date=expire_date, 
+             sub_link=sub_link)
 
 async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -385,8 +406,6 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     traffic_limit = new_user_info.get('trafficLimitBytes')
     hwid_limit = new_user_info.get('hwidDeviceLimit')
 
-    # === PAYLOAD FIX (FINAL VERSION) STARTS HERE ===
-    # This version generates all required random values for the panel.
     payload = {
         "username": username,
         "status": "ACTIVE",
@@ -398,38 +417,37 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         "expireAt": new_user_info.get('expireAt'),
         "description": "",
         "tag": generate_random_string(8).upper(),
-        "email": f"{username}@placeholder.com",
+        "email": f"{generate_random_string(5)}@placeholder.com",
         "telegramId": 0,
         "hwidDeviceLimit": hwid_limit,
         "activeInternalSquads": selected_squad_uuids
     }
-    # === PAYLOAD FIX (FINAL VERSION) ENDS HERE ===
     
-    logger.info(f"FINAL PAYLOAD SENT TO API: {json.dumps(payload, indent=2)}")
+    data, error = api_request('POST', '/api/users', payload=payload)
     
-    _, error = api_request('POST', '/api/users', payload=payload)
-    
+    keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     if error:
-        keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.edit_text(
             t('error_creating_user', context, error=html.escape(error)),
             parse_mode=ParseMode.HTML,
             reply_markup=reply_markup
         )
-        return MAIN_MENU
     else:
+        # NEW FEATURE: Build detailed success message
+        success_message = build_user_created_message(data.get('response', {}), context)
         await query.message.edit_text(
-            t('user_created_success', context, username=html.escape(username)),
+            success_message,
             parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])
+            reply_markup=reply_markup
         )
         
     context.user_data.clear()
+    # BUG FIX: By returning MAIN_MENU, we ensure the 'back_to_main' handler is active.
     return MAIN_MENU
 
-# ... (بقیه توابع بدون تغییر باقی می‌مانند) ...
-
+# ... (rest of the file remains unchanged) ...
 async def set_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer()
     lang_code = query.data.split('_')[-1]
