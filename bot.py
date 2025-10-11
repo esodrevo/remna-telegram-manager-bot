@@ -27,13 +27,15 @@ COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("st
 
 # Conversation states
 (
-    MAIN_MENU, SELECTING_LANGUAGE, AWAITING_USERNAME, USER_MENU, AWAITING_LIMIT,
-    AWAITING_EXPIRE, NODE_LIST, VIEWING_LOGS, QR_VIEW, SELECT_NODE_RESTART,
-    CONFIRM_DELETE, AWAITING_NEW_USERNAME, AWAITING_NEW_LIMIT, AWAITING_NEW_EXPIRE,
-    AWAITING_HWID_CHOICE, AWAITING_HWID_LIMIT, SELECTING_SQUADS
+    MAIN_MENU, SELECTING_LANGUAGE, AWAITING_USERNAME, USER_MENU, 
+    AWAITING_LIMIT, AWAITING_EXPIRE, NODE_LIST, VIEWING_LOGS, 
+    QR_VIEW, SELECT_NODE_RESTART, CONFIRM_DELETE,
+    # Add User States
+    ADD_USER_USERNAME, ADD_USER_DATALIMIT, ADD_USER_EXPIRE, 
+    ADD_USER_HWID_PROMPT, ADD_USER_HWID_LIMIT, ADD_USER_SQUADS
 ) = range(17)
 
-# --- Helper Functions ---
+
 def get_lang_from_file() -> str:
     try:
         with open('settings.json', 'r', encoding='utf-8') as f: return json.load(f).get('language', 'en')
@@ -68,7 +70,7 @@ def human_readable_timediff(dt: datetime, context: ContextTypes.DEFAULT_TYPE):
     if not dt: return t('not_updated_yet', context)
     now = datetime.now(timezone.utc); diff = now - dt; seconds = diff.total_seconds()
     if seconds < 60: return t('just_now', context)
-    minutes = int(seconds/60)
+    minutes = int(seconds/60);
     if minutes < 60: return t('minutes_ago', context, minutes=minutes)
     hours = int(minutes/60)
     if hours < 24: return t('hours_ago', context, hours=hours)
@@ -82,12 +84,9 @@ def api_request(method: str, endpoint: str, payload: dict = None):
         response.raise_for_status()
         return response.json() if response.status_code != 204 else {}, None
     except requests.exceptions.HTTPError as errh:
-        error_message = f"HTTP Error: {errh.response.status_code}"
-        try:
-            error_details = errh.response.json()
-            if "message" in error_details: error_message += f" - {error_details['message']}"
-        except json.JSONDecodeError: pass
-        logger.error(f"Http Error: {errh} - Response: {errh.response.text}"); return None, error_message
+        if errh.response.status_code == 404: return None, "User not found"
+        if errh.response.status_code == 409: return None, "Username exists"
+        logger.error(f"Http Error: {errh} - Response: {errh.response.text}"); return None, f"HTTP Error: {errh.response.status_code}"
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}"); return None, "Unknown error"
 
@@ -131,43 +130,88 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
             f"{t('subscription_link', context)}\n"
             f"<code>{safe_sub_url}</code>")
 
+def get_logs_from_node(node_name: str):
+    node_config = config.NODES.get(node_name)
+    if not node_config: return None, "Node not found in config."
+    if node_config['type'] == 'local':
+        command = ["docker", "exec", "remnanode", "tail", "-n30", "/var/log/supervisor/xray.out.log"]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=True, encoding='utf-8')
+            return result.stdout.strip(), None
+        except Exception as e: return None, str(e)
+    elif node_config['type'] == 'remote':
+        try:
+            headers = {'Authorization': f"Bearer {node_config['token']}"}
+            response = requests.get(node_config['url'], headers=headers, timeout=10)
+            response.raise_for_status()
+            return response.json().get('logs'), None
+        except Exception as e: return None, str(e)
+    return None, "Invalid node type in config."
+
 async def post_init(application: Application):
     lang = get_lang_from_file()
     await application.bot.set_my_commands(COMMANDS.get(lang, COMMANDS['en']))
 
-# --- Main Menu & Core Navigation ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update): return ConversationHandler.END
     context.user_data.clear(); get_lang(context)
     keyboard = [
-        [InlineKeyboardButton(t('add_user_btn', context), callback_data='go_add_user'), InlineKeyboardButton(t('manage_user_btn', context), callback_data='go_manage_user')],
-        [InlineKeyboardButton(t('view_logs_btn', context), callback_data='go_view_logs'), InlineKeyboardButton(t('restart_nodes_btn', context), callback_data='go_restart_nodes')],
+        [InlineKeyboardButton(t('add_user_btn', context), callback_data='go_add_user')],
+        [InlineKeyboardButton(t('manage_user_btn', context), callback_data='go_manage_user')], 
+        [InlineKeyboardButton(t('view_logs_btn', context), callback_data='go_view_logs')], 
+        [InlineKeyboardButton(t('restart_nodes_btn', context), callback_data='go_restart_nodes')], 
         [InlineKeyboardButton(t('change_language_btn', context), callback_data='go_change_language')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     message_text = t('main_menu_prompt', context)
+    chat_id = update.effective_chat.id
     if update.callback_query:
         try:
-            await update.callback_query.message.edit_text(text=message_text, reply_markup=reply_markup)
+            await update.callback_query.message.delete()
         except BadRequest as e:
-            if "Message is not modified" not in str(e):
-                logger.error(f"Error editing message to main menu: {e}")
+            if "Message to delete not found" not in str(e): logger.error(f"Error deleting message: {e}")
+        await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup)
     else:
-        if update.message: await update.message.reply_text(text=message_text, reply_markup=reply_markup)
+        await update.message.reply_text(text=message_text, reply_markup=reply_markup)
     return MAIN_MENU
+
+async def show_node_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    buttons = [InlineKeyboardButton(node_name, callback_data=f"lognode_{node_name}") for node_name in config.NODES.keys()]
+    keyboard = [[b] for b in buttons] if len(buttons) > 1 else [buttons]
+    keyboard.append([InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    message_text = t('select_node_prompt', context)
+    query = update.callback_query
+    if query:
+        try:
+            await query.message.delete()
+        except BadRequest as e:
+            if "Message to delete not found" not in str(e): logger.error(f"Error deleting message: {e}")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=message_text, reply_markup=reply_markup)
+    return NODE_LIST
 
 async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer(); action = query.data
+    if action == 'go_add_user':
+        context.user_data['new_user'] = {}
+        await query.message.edit_text(t('ask_for_new_username', context))
+        return ADD_USER_USERNAME
     if action == 'go_manage_user':
-        await query.message.edit_text(t('ask_for_username', context), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]))
+        await query.message.edit_text(t('ask_for_username', context))
         context.user_data['prompt_message_id'] = query.message.message_id
         return AWAITING_USERNAME
-    if action == 'go_add_user': return await add_user_start(update, context)
-    if action == 'go_view_logs': return await show_node_list(update, context)
-    if action == 'go_restart_nodes': return await show_restart_node_list(update, context)
+    if action == 'go_view_logs':
+        return await show_node_list(update, context)
+    if action == 'go_restart_nodes':
+        buttons = [InlineKeyboardButton(node_name, callback_data=f"restartnode_{node_name}") for node_name in config.NODES.keys()]
+        keyboard = [[b] for b in buttons] if len(buttons) > 1 else [buttons]; keyboard.append([InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')])
+        await query.message.edit_text(t('select_node_restart_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard)); return SELECT_NODE_RESTART
     if action == 'go_change_language':
+        try:
+            await query.message.delete()
+        except BadRequest: pass
         keyboard = [[InlineKeyboardButton("English 🇬🇧", callback_data='set_lang_en'), InlineKeyboardButton("Русский 🇷🇺", callback_data='set_lang_ru'), InlineKeyboardButton("فارسی 🇮🇷", callback_data='set_lang_fa')], [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
-        await query.message.edit_text(text=t('select_language_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard)); return SELECTING_LANGUAGE
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=t('select_language_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard)); return SELECTING_LANGUAGE
     return MAIN_MENU
 
 async def set_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -177,31 +221,24 @@ async def set_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await context.bot.delete_my_commands(); await context.bot.set_my_commands(COMMANDS.get(lang_code, COMMANDS['en']))
     return await start(update, context)
 
-# --- User Management (View, Edit, Delete) ---
-async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int = None) -> int:
+async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     username_to_fetch = context.user_data.get('username')
     if update.message and not username_to_fetch:
         username_to_fetch = update.message.text
+    if update.message:
         try: await update.message.delete()
         except BadRequest: pass
-
+    prompt_message_id = context.user_data.pop('prompt_message_id', None)
+    if prompt_message_id:
+        try: await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_message_id)
+        except BadRequest: pass
+    get_lang(context)
     if not username_to_fetch: return await start(update, context)
     context.user_data['username'] = username_to_fetch
-
-    chat_id = update.effective_chat.id
-    if message_id:
-        sent_message = await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=t('fetching_user_info', context, username=username_to_fetch), parse_mode=ParseMode.HTML)
-    else:
-        prompt_message_id = context.user_data.pop('prompt_message_id', None)
-        if prompt_message_id:
-            try: await context.bot.delete_message(chat_id=chat_id, message_id=prompt_message_id)
-            except BadRequest: pass
-        sent_message = await context.bot.send_message(chat_id=chat_id, text=t('fetching_user_info', context, username=username_to_fetch), parse_mode=ParseMode.HTML)
-
+    sent_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('fetching_user_info', context, username=username_to_fetch), parse_mode=ParseMode.HTML)
     data, error = api_request('GET', f'/api/users/by-username/{username_to_fetch}')
     if error:
         await sent_message.edit_text(t('error_fetching', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])); return AWAITING_USERNAME
-    
     user_data = data.get('response', {});
     context.user_data['user_data'] = user_data; context.user_data['user_uuid'] = user_data.get('uuid')
     message_text = build_user_info_message(user_data, context)
@@ -222,22 +259,28 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE, mes
 async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer(); action = query.data
     if action == 'back_to_main': return await start(update, context)
-    if action == 'refresh': return await show_user_card(update, context, message_id=query.message.message_id)
+    if action == 'refresh':
+        await query.message.delete(); return await show_user_card(update, context)
     
-    user_data = context.user_data.get('user_data', {}); username = user_data.get('username', '')
+    user_data = context.user_data.get('user_data', {})
 
     if action == 'delete_user':
+        username = user_data.get('username')
         text = t('delete_confirm_prompt', context, username=username)
-        keyboard = [[InlineKeyboardButton(t('confirm_delete_btn', context), callback_data='confirm_delete'), InlineKeyboardButton(t('cancel_delete_btn', context), callback_data='cancel_delete')]]
+        keyboard = [[
+            InlineKeyboardButton(t('confirm_delete_btn', context), callback_data='confirm_delete'),
+            InlineKeyboardButton(t('cancel_delete_btn', context), callback_data='cancel_delete')
+        ]]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
         return CONFIRM_DELETE
     
-    if action in ['get_happ_qr', 'show_qr']:
-        link = user_data.get('happ', {}).get('cryptoLink') if action == 'get_happ_qr' else user_data.get('subscriptionUrl')
-        qr_code_bytes = generate_qr_code(link)
+    if action == 'get_happ_qr':
+        happ_link = user_data.get('happ', {}).get('cryptoLink')
+        qr_code_bytes = generate_qr_code(happ_link)
         if qr_code_bytes:
-            caption_text = t('happ_qr_caption', context, username=username) if action == 'get_happ_qr' else ""
-            full_caption = f"{caption_text}\n<code>{html.escape(link)}</code>" if action == 'get_happ_qr' else ""
+            username = user_data.get('username')
+            caption = t('happ_qr_caption', context, username=username)
+            full_caption = f"{caption}\n<code>{html.escape(happ_link)}</code>"
             media = InputMediaPhoto(media=qr_code_bytes, caption=full_caption, parse_mode=ParseMode.HTML)
             keyboard = [[InlineKeyboardButton(t('back_to_user_info_btn', context), callback_data='back_to_user_info')]]
             await query.message.edit_media(media=media, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -247,66 +290,55 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return USER_MENU
 
     if action in ['enable_user', 'disable_user', 'reset_usage']:
-        popup_map = {'enable_user': (t('enabling_user', context), t('user_enabled_success', context)), 'disable_user': (t('disabling_user', context), t('user_disabled_success', context)), 'reset_usage': (t('reseting_usage', context), t('reset_usage_success', context))}
-        api_action = action.replace('_user', '').replace('_', '-')
-        await query.answer(text=popup_map[action][0], show_alert=False)
+        action_str, popup_text, success_text = '', '', ''
+        if action == 'enable_user': action_str, popup_text, success_text = 'enable', t('enabling_user', context), t('user_enabled_success', context)
+        elif action == 'disable_user': action_str, popup_text, success_text = 'disable', t('disabling_user', context), t('user_disabled_success', context)
+        elif action == 'reset_usage': action_str, popup_text, success_text = 'reset-traffic', t('reseting_usage', context), t('reset_usage_success', context)
+        await query.answer(text=popup_text, show_alert=False)
         user_uuid = context.user_data.get('user_uuid')
         if not user_uuid: await query.answer(text="Error: User UUID not found.", show_alert=True); return USER_MENU
-        _, error = api_request('POST', f'/api/users/{user_uuid}/actions/{api_action}')
+        endpoint = f'/api/users/{user_uuid}/actions/{action_str}'
+        _, error = api_request('POST', endpoint)
         if error: await query.answer(text=f"API Error: {error}", show_alert=True)
         else:
-            await query.answer(text=popup_map[action][1], show_alert=False)
-            return await show_user_card(update, context, message_id=query.message.message_id)
+            await query.answer(text=success_text, show_alert=False)
+            await query.message.delete()
+            return await show_user_card(update, context)
         return USER_MENU
         
-    context.user_data['prompt_message_id'] = query.message.message_id
+    if action == 'show_qr':
+        subscription_url = user_data.get('subscriptionUrl')
+        qr_code_bytes = generate_qr_code(subscription_url)
+        if qr_code_bytes:
+            media = InputMediaPhoto(media=qr_code_bytes)
+            keyboard = [[InlineKeyboardButton(t('back_to_user_info_btn', context), callback_data='back_to_user_info')]]
+            await query.message.edit_media(media=media, reply_markup=InlineKeyboardMarkup(keyboard))
+            return QR_VIEW
+        return USER_MENU
+        
+    username = context.user_data.get('username')
     if action == 'edit_limit':
-        await query.message.edit_text(text=t('ask_for_new_limit', context, username=username), parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('cancel_btn', context), callback_data='cancel_edit')]]))
+        await query.message.edit_text(text=t('ask_for_new_limit', context, username=username), parse_mode=ParseMode.HTML)
         context.user_data['editing'] = 'limit'; return AWAITING_LIMIT
     elif action == 'edit_expire':
-        await query.message.edit_text(text=t('ask_for_new_expire', context, username=username), parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('cancel_btn', context), callback_data='cancel_edit')]]))
+        await query.message.edit_text(text=t('ask_for_new_expire', context, username=username), parse_mode=ParseMode.HTML)
         context.user_data['editing'] = 'expire'; return AWAITING_EXPIRE
     return USER_MENU
-
-async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    prompt_message_id = context.user_data.pop('prompt_message_id', None)
-    if not prompt_message_id: return await start(update, context)
-    try: await update.message.delete()
-    except BadRequest: pass
-    if not context.user_data.get('user_uuid'): return await start(update, context)
-    
-    payload = {}
-    try:
-        if context.user_data.get('editing') == 'limit':
-            new_limit_gb = float(update.message.text); payload = {"uuid": context.user_data.get('user_uuid'), "trafficLimitBytes": int(new_limit_gb * 1024**3)}
-        elif context.user_data.get('editing') == 'expire':
-            days = int(update.message.text); payload = {"uuid": context.user_data.get('user_uuid'), "expireAt": (datetime.now(timezone.utc) + timedelta(days=days)).isoformat().replace('+00:00', 'Z')}
-    except (ValueError, TypeError):
-        await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=prompt_message_id, text=t('invalid_number', context))
-        return await show_user_card(update, context, message_id=prompt_message_id)
-    
-    _, error = api_request('PATCH', '/api/users', payload=payload)
-    if error: await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=prompt_message_id, text=t('update_failed', context, error=error))
-    return await show_user_card(update, context, message_id=prompt_message_id)
-
-async def cancel_edit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query; await query.answer()
-    return await show_user_card(update, context, message_id=query.message.message_id)
 
 async def delete_user_confirmation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer()
     action = query.data; username = context.user_data.get('user_data', {}).get('username', '')
-    if action == 'cancel_delete': return await show_user_card(update, context, message_id=query.message.message_id)
+    await query.message.delete()
+    if action == 'cancel_delete': return await show_user_card(update, context)
     if action == 'confirm_delete':
-        await query.message.edit_text(t('deleting_user', context))
         user_uuid = context.user_data.get('user_uuid')
         if not user_uuid:
-            await query.message.edit_text("Error: User UUID not found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]))
-            return MAIN_MENU
+            await context.bot.send_message(chat_id=query.message.chat_id, text="Error: User UUID not found.")
+            return await start(update, context)
         _, error = api_request('DELETE', f'/api/users/{user_uuid}')
-        text = t('user_deleted_success', context, username=username) if not error else f"❌ Error deleting user: {error}"
-        await query.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]))
-        return MAIN_MENU
+        if error: await context.bot.send_message(chat_id=query.message.chat_id, text=f"❌ Error deleting user: {error}")
+        else: await context.bot.send_message(chat_id=query.message.chat_id, text=t('user_deleted_success', context, username=username), parse_mode=ParseMode.HTML)
+        return await start(update, context)
     return USER_MENU
 
 async def back_to_user_info_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -314,169 +346,159 @@ async def back_to_user_info_handler(update: Update, context: ContextTypes.DEFAUL
     await query.message.delete()
     return await show_user_card(update, context)
 
-# --- Add User Flow ---
-async def add_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query; await query.answer()
-    context.user_data['new_user'] = {}
-    keyboard = [[InlineKeyboardButton(t('cancel_btn', context), callback_data='back_to_main')]]
-    await query.message.edit_text(t('ask_new_username', context), reply_markup=InlineKeyboardMarkup(keyboard))
-    context.user_data['prompt_message_id'] = query.message.message_id
-    return AWAITING_NEW_USERNAME
-
-async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE, next_state: int, prompt_key: str, data_key: str, is_numeric: bool = True, allow_zero: bool = False, is_float: bool = False) -> int:
-    if not (update.message and update.message.text): return context.user_data.get('current_state')
-    
-    prompt_message_id = context.user_data.get('prompt_message_id')
-    chat_id = update.effective_chat.id
-    user_input = update.message.text
-    
-    try: await update.message.delete()
-    except BadRequest: pass
-
+async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.delete()
+    prompt_message_id = context.user_data.pop('prompt_message_id', None)
+    if prompt_message_id:
+        try: await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_message_id)
+        except BadRequest: pass
+    if not context.user_data.get('user_uuid'): return await start(update, context)
+    payload = {}
     try:
-        if is_numeric:
-            value = float(user_input) if is_float else int(user_input)
-            if value < 0 or (value == 0 and not allow_zero):
-                raise ValueError("Input must be positive.")
-            context.user_data['new_user'][data_key] = value
-        else:
-            context.user_data['new_user'][data_key] = user_input
-
-        keyboard = [[InlineKeyboardButton(t('cancel_btn', context), callback_data='back_to_main')]]
-        await context.bot.edit_message_text(chat_id=chat_id, message_id=prompt_message_id, text=t(prompt_key, context), reply_markup=InlineKeyboardMarkup(keyboard))
-        context.user_data['current_state'] = next_state
-        return next_state
+        if context.user_data.get('editing') == 'limit':
+            new_limit_gb = float(update.message.text); payload = {"uuid": context.user_data.get('user_uuid'), "trafficLimitBytes": int(new_limit_gb * 1024**3)}
+        elif context.user_data.get('editing') == 'expire':
+            days = int(update.message.text); payload = {"uuid": context.user_data.get('user_uuid'), "expireAt": (datetime.now(timezone.utc) + timedelta(days=days)).isoformat().replace('+00:00', 'Z')}
     except (ValueError, TypeError):
-        original_prompt = t(context.user_data.get('current_prompt_key'), context)
-        error_text = f"❌ {t('invalid_number', context)}\n\n{original_prompt}"
-        await context.bot.edit_message_text(chat_id=chat_id, message_id=prompt_message_id, text=error_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('cancel_btn', context), callback_data='back_to_main')]]))
-        return context.user_data.get('current_state')
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=t('invalid_number', context)); return await show_user_card(update, context)
+    _, error = api_request('PATCH', '/api/users', payload=payload)
+    if error: await context.bot.send_message(chat_id=update.effective_chat.id, text=t('update_failed', context, error=error))
+    return await show_user_card(update, context)
 
+# --- Add User Handlers ---
 async def add_user_get_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['current_prompt_key'] = 'ask_new_username'
-    return await handle_text_input(update, context, AWAITING_NEW_LIMIT, 'ask_new_limit', 'username', is_numeric=False)
+    username = update.message.text.strip()
+    await update.message.delete()
+    _, error = api_request('GET', f'/api/users/by-username/{username}')
+    if error != "User not found":
+        await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=update.message.message_id -1, text=t('username_exists', context))
+        return ADD_USER_USERNAME
+    context.user_data['new_user']['username'] = username
+    await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=update.message.message_id -1, text=t('ask_for_data_limit', context))
+    return ADD_USER_DATALIMIT
 
-async def add_user_get_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['current_prompt_key'] = 'ask_new_limit'
-    return await handle_text_input(update, context, AWAITING_NEW_EXPIRE, 'ask_new_expire', 'limit_gb', allow_zero=True)
+async def add_user_get_datalimit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.delete()
+    try:
+        limit_gb = float(update.message.text)
+        if limit_gb < 0: raise ValueError
+        context.user_data['new_user']['trafficLimitBytes'] = int(limit_gb * 1024**3)
+        await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=update.message.message_id - 1, text=t('ask_for_expire_days', context))
+        return ADD_USER_EXPIRE
+    except (ValueError, TypeError):
+        await update.message.reply_text(t('invalid_number', context))
+        return ADD_USER_DATALIMIT
 
 async def add_user_get_expire(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['current_prompt_key'] = 'ask_new_expire'
-    # This is the last text input, so transition to a button choice next
-    if not (update.message and update.message.text): return AWAITING_NEW_EXPIRE
-    
-    prompt_message_id = context.user_data.get('prompt_message_id')
-    chat_id = update.effective_chat.id
+    await update.message.delete()
     try:
         days = int(update.message.text)
-        if days <= 0: raise ValueError
-        context.user_data['new_user']['expire_days'] = days
-        try: await update.message.delete()
-        except BadRequest: pass
-        keyboard = [[InlineKeyboardButton(t('disable_hwid_btn', context), callback_data='hwid_disable')], [InlineKeyboardButton(t('set_hwid_btn', context), callback_data='hwid_set')], [InlineKeyboardButton(t('cancel_btn', context), callback_data='back_to_main')]]
-        await context.bot.edit_message_text(chat_id=chat_id, message_id=prompt_message_id, text=t('ask_hwid_limit_q', context), reply_markup=InlineKeyboardMarkup(keyboard))
-        return AWAITING_HWID_CHOICE
+        if days < 0: raise ValueError
+        expire_at = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat().replace('+00:00', 'Z')
+        context.user_data['new_user']['expireAt'] = expire_at
+        keyboard = [[InlineKeyboardButton(t('yes_btn', context), callback_data='hwid_disable_yes'), InlineKeyboardButton(t('no_btn', context), callback_data='hwid_disable_no')]]
+        await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=update.message.message_id-1, text=t('ask_hwid_disable', context), reply_markup=InlineKeyboardMarkup(keyboard))
+        return ADD_USER_HWID_PROMPT
     except (ValueError, TypeError):
-        try: await update.message.delete()
-        except BadRequest: pass
-        error_text = f"❌ {t('invalid_number', context)}\n\n{t('ask_new_expire', context)}"
-        await context.bot.edit_message_text(chat_id=chat_id, message_id=prompt_message_id, text=error_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('cancel_btn', context), callback_data='back_to_main')]]))
-        return AWAITING_NEW_EXPIRE
+        await update.message.reply_text(t('invalid_number', context))
+        return ADD_USER_EXPIRE
 
-async def add_user_get_hwid_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query; await query.answer()
-    context.user_data['prompt_message_id'] = query.message.message_id
-    if query.data == 'hwid_disable':
-        context.user_data['new_user']['hwid'] = 0
-        return await add_user_show_squads(query.message.chat_id, query.message.message_id, context)
-    else: # hwid_set
-        keyboard = [[InlineKeyboardButton(t('cancel_btn', context), callback_data='back_to_main')]]
-        await query.message.edit_text(text=t('ask_hwid_limit_val', context), reply_markup=InlineKeyboardMarkup(keyboard))
-        return AWAITING_HWID_LIMIT
+async def add_user_hwid_prompt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query; await query.answer(); action = query.data
+    if action == 'hwid_disable_yes':
+        context.user_data['new_user']['hwidDeviceLimit'] = None
+        return await display_squad_selection(update, context)
+    else: # 'hwid_disable_no'
+        await query.message.edit_text(t('ask_for_hwid_limit', context))
+        return ADD_USER_HWID_LIMIT
 
 async def add_user_get_hwid_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not (update.message and update.message.text): return AWAITING_HWID_LIMIT
-
-    prompt_message_id = context.user_data.get('prompt_message_id')
-    chat_id = update.effective_chat.id
-    try: await update.message.delete()
-    except BadRequest: pass
-    
+    await update.message.delete()
     try:
         limit = int(update.message.text)
         if limit <= 0: raise ValueError
-        context.user_data['new_user']['hwid'] = limit
-        return await add_user_show_squads(chat_id, prompt_message_id, context)
+        context.user_data['new_user']['hwidDeviceLimit'] = limit
+        await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id -1)
+        return await display_squad_selection(update, context)
     except (ValueError, TypeError):
-        error_text = f"❌ {t('invalid_number', context)}\n\n{t('ask_hwid_limit_val', context)}"
-        await context.bot.edit_message_text(chat_id=chat_id, message_id=prompt_message_id, text=error_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('cancel_btn', context), callback_data='back_to_main')]]))
-        return AWAITING_HWID_LIMIT
+        await update.message.reply_text(t('invalid_number', context)); return ADD_USER_HWID_LIMIT
 
-async def add_user_show_squads(chat_id: int, message_id: int, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=t('fetching_squads', context))
-    squads_data, error = api_request('GET', '/api/internal-squads')
-    if error or not squads_data.get('response'):
-        error_text = t('error_fetching', context, error=error or t('no_squads_found', context))
-        await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=error_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]))
-        return MAIN_MENU
-
-    context.user_data['squads_list'] = squads_data['response']
-    if 'selected_squads' not in context.user_data: context.user_data['selected_squads'] = set()
+async def display_squad_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    chat_id = update.effective_chat.id
+    if update.callback_query: await update.callback_query.message.delete()
+    
+    squad_data, error = api_request('GET', '/api/internal-squads')
+    if error or 'response' not in squad_data:
+        await context.bot.send_message(chat_id=chat_id, text=t('fetching_squads_failed', context))
+        return await start(update, context)
+    
+    context.user_data['all_squads'] = squad_data['response']
+    if 'selected_squads' not in context.user_data['new_user']: context.user_data['new_user']['selected_squads'] = []
 
     keyboard = []
-    for squad in context.user_data['squads_list']:
-        squad_name = f"✅ {squad['name']}" if squad['uuid'] in context.user_data['selected_squads'] else squad['name']
-        keyboard.append([InlineKeyboardButton(squad_name, callback_data=f"squad_{squad['uuid']}")])
-    keyboard.append([InlineKeyboardButton(t('create_user_btn', context), callback_data='squad_done')])
-    keyboard.append([InlineKeyboardButton(t('cancel_btn', context), callback_data='back_to_main')])
+    selected_uuids = context.user_data['new_user']['selected_squads']
+    for squad in context.user_data['all_squads']:
+        is_selected = squad['uuid'] in selected_uuids
+        text = f"✅ {squad['name']}" if is_selected else squad['name']
+        keyboard.append([InlineKeyboardButton(text, callback_data=f"squad_{squad['uuid']}")])
     
-    await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=t('select_squads_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard))
-    return SELECTING_SQUADS
-
-async def add_user_toggle_squad(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query; await query.answer()
-    squad_uuid = query.data.split('_', 1)[1]
-    if 'selected_squads' not in context.user_data: context.user_data['selected_squads'] = set()
-    if squad_uuid in context.user_data['selected_squads']: context.user_data['selected_squads'].remove(squad_uuid)
-    else: context.user_data['selected_squads'].add(squad_uuid)
-    return await add_user_show_squads(query.message.chat_id, query.message.message_id, context)
-
-async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query; await query.answer()
-    await query.message.edit_text(t('creating_user', context))
-    user_details = context.user_data.get('new_user', {})
-    payload = {
-        "username": user_details.get('username'),
-        "trafficLimitBytes": user_details.get('limit_gb', 0) * 1024**3 if user_details.get('limit_gb', 0) > 0 else 0,
-        "expireAt": (datetime.now(timezone.utc) + timedelta(days=user_details.get('expire_days', 30))).isoformat().replace('+00:00', 'Z'),
-        "hwidDeviceLimit": user_details.get('hwid', 0),
-        "squadUuids": list(context.user_data.get('selected_squads', []))
-    }
-    data, error = api_request('POST', '/api/users', payload=payload)
-    if error:
-        await query.message.edit_text(t('user_created_failed', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]))
-    else:
-        new_user_data = data.get('response', {})
-        message_text = build_user_info_message(new_user_data, context)
-        await query.message.edit_text(
-            f"✅ {t('user_created_success', context, username=user_details.get('username'))}\n\n{message_text}",
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])
-        )
-    return MAIN_MENU
-
-# --- Node Management ---
-async def show_node_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query; await query.answer()
-    buttons = [InlineKeyboardButton(node_name, callback_data=f"lognode_{node_name}") for node_name in config.NODES.keys()]
-    keyboard = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    keyboard.append([InlineKeyboardButton(t('done_btn', context), callback_data='squad_done')])
     keyboard.append([InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')])
-    await query.message.edit_text(text=t('select_node_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard))
-    return NODE_LIST
+    
+    await context.bot.send_message(chat_id=chat_id, text=t('select_squads', context), reply_markup=InlineKeyboardMarkup(keyboard))
+    return ADD_USER_SQUADS
+
+async def add_user_squad_selection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query; await query.answer(); action = query.data
+    
+    if action == 'squad_done':
+        await query.message.edit_text(t('creating_user', context))
+        
+        user_payload = {
+            "username": context.user_data['new_user'].get('username'),
+            "trafficLimitBytes": context.user_data['new_user'].get('trafficLimitBytes'),
+            "expireAt": context.user_data['new_user'].get('expireAt'),
+            "hwidDeviceLimit": context.user_data['new_user'].get('hwidDeviceLimit'),
+            "activeInternalSquadUuids": context.user_data['new_user'].get('selected_squads', [])
+        }
+        
+        _, error = api_request('POST', '/api/users', payload=user_payload)
+        
+        if error:
+            await query.message.edit_text(t('user_created_failed', context, error=error))
+        else:
+            await query.message.edit_text(t('user_created_success', context, username=user_payload['username']))
+        
+        await context.bot.send_message(chat_id=query.effective_chat.id, text="Returning to main menu...") # Placeholder
+        return await start(update, context)
+
+    squad_uuid = action.split('_')[1]
+    selected_uuids = context.user_data['new_user']['selected_squads']
+    if squad_uuid in selected_uuids: selected_uuids.remove(squad_uuid)
+    else: selected_uuids.append(squad_uuid)
+    
+    keyboard = []
+    for squad in context.user_data['all_squads']:
+        is_selected = squad['uuid'] in selected_uuids
+        text = f"✅ {squad['name']}" if is_selected else squad['name']
+        keyboard.append([InlineKeyboardButton(text, callback_data=f"squad_{squad['uuid']}")])
+    
+    keyboard.append([InlineKeyboardButton(t('done_btn', context), callback_data='squad_done')])
+    keyboard.append([InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')])
+    
+    await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+    return ADD_USER_SQUADS
+
+# --- End Add User Handlers ---
 
 async def logs_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query; await query.answer(); node_name = query.data.split('_')[1]
-    await query.message.edit_text(text=t('fetching_logs', context, node_name=node_name), parse_mode=ParseMode.HTML)
+    query = update.callback_query; await query.answer(); action = query.data
+    if action == 'back_to_main': return await start(update, context)
+    if action == 'go_view_logs': return await show_node_list(update, context)
+    try: await query.message.delete()
+    except BadRequest: pass
+    node_name = action.split('_')[1]; context.user_data['selected_node'] = node_name
+    message = await context.bot.send_message(chat_id=query.message.chat_id, text=t('fetching_logs', context, node_name=node_name), parse_mode=ParseMode.HTML)
     logs, error = get_logs_from_node(node_name); MAX_LOG_LENGTH = 3800
     if logs and len(logs) > MAX_LOG_LENGTH: logs = f"...\n{logs[-MAX_LOG_LENGTH:]}"
     if error:
@@ -486,22 +508,15 @@ async def logs_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         safe_logs = html.escape(logs or t('logs_empty', context))
         message_text = f"{t('logs_title', context, node_name=node_name)}\n\n<pre><code>{safe_logs}</code></pre>"
         keyboard = [[InlineKeyboardButton(t('refresh_logs_btn', context), callback_data=f'lognode_{node_name}')], [InlineKeyboardButton(t('back_to_nodes_btn', context), callback_data='go_view_logs')]]
-    await query.message.edit_text(text=message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    await message.edit_text(text=message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
     return VIEWING_LOGS
-
-async def show_restart_node_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query; await query.answer()
-    buttons = [InlineKeyboardButton(node_name, callback_data=f"restartnode_{node_name}") for node_name in config.NODES.keys()]
-    keyboard = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
-    keyboard.append([InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')])
-    await query.message.edit_text(t('select_node_restart_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard));
-    return SELECT_NODE_RESTART
 
 async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer()
     node_name = query.data.split('_')[1]
     await query.message.edit_text(t('restarting_node', context, node_name=node_name), parse_mode=ParseMode.HTML)
-    node_config = config.NODES.get(node_name); output, error = "", ""
+    node_config = config.NODES.get(node_name)
+    output, error = "", ""
     if node_config['type'] == 'local':
         command = "cd /opt/remnanode && docker compose down && docker compose up -d && sleep 5 && docker compose logs --tail=20"
         try:
@@ -518,35 +533,37 @@ async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 if data.get('status') != 'success': error = data.get('details', 'Unknown remote error')
             else: error = "Could not parse IP from node URL."
         except Exception as e: error = str(e)
-    message_text = f"{t('node_restart_success', context, node_name=node_name)}\n\n<b>{t('logs_title', context, node_name=node_name)}</b>\n<pre><code>{html.escape(output)}</code></pre>" if not error else f"{t('node_restart_failed', context, node_name=node_name)}\n\n<pre><code>{html.escape(error)}</code></pre>"
+    if error: message_text = f"{t('node_restart_failed', context, node_name=node_name)}\n\n<pre><code>{html.escape(error)}</code></pre>"
+    else: message_text = f"{t('node_restart_success', context, node_name=node_name)}\n\n<b>{t('logs_title', context, node_name=node_name)}</b>\n<pre><code>{html.escape(output)}</code></pre>"
     keyboard = [[InlineKeyboardButton(t('back_to_restart_list_btn', context), callback_data='go_restart_nodes')]]
     await query.message.edit_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
-    return SELECT_NODE_RESTART
+    return MAIN_MENU
 
 def main() -> None:
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            MAIN_MENU: [CallbackQueryHandler(main_menu_handler, pattern='^go_'), CallbackQueryHandler(start, pattern='^back_to_main$')],
+            MAIN_MENU: [CallbackQueryHandler(main_menu_handler), CallbackQueryHandler(start, pattern='^back_to_main$')],
             SELECTING_LANGUAGE: [CallbackQueryHandler(set_lang_callback, pattern='^set_lang_'), CallbackQueryHandler(start, pattern='^back_to_main$')],
             AWAITING_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_user_card), CallbackQueryHandler(start, pattern='^back_to_main$')],
             USER_MENU: [CallbackQueryHandler(user_menu_handler)],
             QR_VIEW: [CallbackQueryHandler(back_to_user_info_handler, pattern='^back_to_user_info$')],
-            AWAITING_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value), CallbackQueryHandler(cancel_edit_handler, pattern='^cancel_edit$')],
-            AWAITING_EXPIRE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value), CallbackQueryHandler(cancel_edit_handler, pattern='^cancel_edit$')],
-            CONFIRM_DELETE: [CallbackQueryHandler(delete_user_confirmation_handler)],
-            AWAITING_NEW_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_get_username), CallbackQueryHandler(start, pattern='^back_to_main$')],
-            AWAITING_NEW_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_get_limit), CallbackQueryHandler(start, pattern='^back_to_main$')],
-            AWAITING_NEW_EXPIRE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_get_expire), CallbackQueryHandler(start, pattern='^back_to_main$')],
-            AWAITING_HWID_CHOICE: [CallbackQueryHandler(add_user_get_hwid_choice, pattern='^hwid_'), CallbackQueryHandler(start, pattern='^back_to_main$')],
-            AWAITING_HWID_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_get_hwid_limit), CallbackQueryHandler(start, pattern='^back_to_main$')],
-            SELECTING_SQUADS: [CallbackQueryHandler(add_user_toggle_squad, pattern='^squad_(?!done)'), CallbackQueryHandler(add_user_create, pattern='^squad_done$'), CallbackQueryHandler(start, pattern='^back_to_main$')],
-            NODE_LIST: [CallbackQueryHandler(logs_node_handler, pattern='^lognode_'), CallbackQueryHandler(start, pattern='^back_to_main$')],
-            VIEWING_LOGS: [CallbackQueryHandler(logs_node_handler, pattern='^lognode_'), CallbackQueryHandler(main_menu_handler, pattern='^go_view_logs$')],
+            AWAITING_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
+            AWAITING_EXPIRE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
+            NODE_LIST: [CallbackQueryHandler(logs_node_handler)],
+            VIEWING_LOGS: [CallbackQueryHandler(logs_node_handler)],
             SELECT_NODE_RESTART: [CallbackQueryHandler(restart_node_handler, pattern='^restartnode_'), CallbackQueryHandler(main_menu_handler, pattern='^go_restart_nodes$'), CallbackQueryHandler(start, pattern='^back_to_main$')],
+            CONFIRM_DELETE: [CallbackQueryHandler(delete_user_confirmation_handler)],
+            # Add User States
+            ADD_USER_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_get_username)],
+            ADD_USER_DATALIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_get_datalimit)],
+            ADD_USER_EXPIRE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_get_expire)],
+            ADD_USER_HWID_PROMPT: [CallbackQueryHandler(add_user_hwid_prompt_handler, pattern='^hwid_disable_')],
+            ADD_USER_HWID_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_get_hwid_limit)],
+            ADD_USER_SQUADS: [CallbackQueryHandler(add_user_squad_selection_handler, pattern='^squad_'), CallbackQueryHandler(start, pattern='^back_to_main$')],
         },
-        fallbacks=[CommandHandler('start', start), CallbackQueryHandler(start, pattern='^back_to_main$')], allow_reentry=True
+        fallbacks=[CommandHandler('start', start)], allow_reentry=True
     )
     application.add_handler(conv_handler)
     logger.info("Bot is running...")
