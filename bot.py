@@ -194,39 +194,44 @@ async def show_node_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return NODE_LIST
 
 # ======================================================================
-# ========= vvvvvvvvvvvv این تابع اصلاح شده است vvvvvvvvvvvv =========
+# ========= vvvvvvvvvvvv تابع کمکی جدید برای مرتب‌سازی امن vvvvvvvvvvvv
 # ======================================================================
+def get_creation_date(user: dict):
+    """
+    Safely extracts and parses the creation date from a user dictionary.
+    Returns a very old date if the date is missing or invalid, ensuring the sort doesn't crash.
+    """
+    created_at_str = user.get('createdAt')
+    if not created_at_str or not isinstance(created_at_str, str):
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        return datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+# ======================================================================
+# ======================================================================
+
 async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer(); action = query.data
     
     if action == 'go_add_user':
-        # 1. به کاربر اطلاع می‌دهیم که در حال دریافت اطلاعات هستیم
         await query.message.edit_text(text="⏳ در حال دریافت آخرین کاربر ساخته شده...")
         
-        # 2. لیست تمام کاربران را از API دریافت می‌کنیم
-        last_username = "N/A" # مقدار پیش‌فرض در صورت بروز خطا
+        last_username = "N/A"
         users_data, error = api_request('GET', '/api/users')
         
         if not error and users_data and 'response' in users_data:
             users_list = users_data['response']
             if users_list:
                 try:
-                    # 3. کاربران را بر اساس تاریخ ساخت (createdAt) مرتب می‌کنیم
-                    # این بخش اصلاح شده تا تاریخ‌ها را به درستی مدیریت کند
-                    sorted_users = sorted(
-                        (user for user in users_list if user.get('createdAt')), # Only consider users with a creation date
-                        key=lambda u: datetime.fromisoformat(u['createdAt'].replace('Z', '+00:00')),
-                        reverse=True
-                    )
+                    # استفاده از تابع کمکی جدید برای مرتب‌سازی امن
+                    sorted_users = sorted(users_list, key=get_creation_date, reverse=True)
                     
                     if sorted_users:
-                        # 4. نام کاربری اولین نفر در لیست مرتب‌شده، آخرین کاربر است
                         last_username = sorted_users[0].get('username', "N/A")
-
                 except Exception as e:
-                    logger.error(f"Error sorting users: {e}")
+                    logger.error(f"Error processing users list: {e}")
 
-        # 5. پیام را با نام آخرین کاربر نمایش می‌دهیم
         context.user_data['new_user_data'] = {}
         prompt_text = t('ask_for_new_username_with_suggestion', context, last_user=last_username)
         prompt_message = await query.message.edit_text(prompt_text, parse_mode=ParseMode.HTML)
@@ -248,9 +253,6 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         keyboard = [[InlineKeyboardButton("English 🇬🇧", callback_data='set_lang_en'), InlineKeyboardButton("Русский 🇷🇺", callback_data='set_lang_ru'), InlineKeyboardButton("فارسی 🇮🇷", callback_data='set_lang_fa')], [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
         await query.message.edit_text(text=t('select_language_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard)); return SELECTING_LANGUAGE
     return MAIN_MENU
-# ======================================================================
-# ========= ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ =========
-# ======================================================================
 
 async def get_new_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['new_user_data']['username'] = update.message.text
@@ -687,7 +689,6 @@ def main() -> None:
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            # کنترل‌کننده اصلی منو حالا فقط به دکمه‌هایی که با "go_" شروع می‌شوند پاسخ می‌دهد
             MAIN_MENU: [CallbackQueryHandler(main_menu_handler, pattern="^go_")],
             SELECTING_LANGUAGE: [CallbackQueryHandler(set_lang_callback, pattern='^set_lang_')],
             AWAITING_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_user_card)],
@@ -711,7 +712,6 @@ def main() -> None:
             AWAITING_HWID_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_hwid_value)],
             SELECTING_SQUADS: [CallbackQueryHandler(squad_selection_handler, pattern='^squad_|^create_user_final$')]
         },
-        # این بخش تضمین می‌کند که دستور /start و دکمه "بازگشت" از هر حالتی کار کنند
         fallbacks=[
             CommandHandler('start', start),
             CallbackQueryHandler(start, pattern='^back_to_main$')
