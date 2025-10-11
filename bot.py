@@ -36,7 +36,7 @@ COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("st
 
 def get_lang_from_file() -> str:
     try:
-        with open('settings.json', 'r', encoding='utf-8') as f: return json.load(f).get('language', 'en')
+        with open('settings.json', 'r', encoding='utf--8') as f: return json.load(f).get('language', 'en')
     except (FileNotFoundError, json.JSONDecodeError): return 'en'
 
 def get_lang(context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -158,7 +158,8 @@ async def post_init(application: Application):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update): return ConversationHandler.END
-    context.user_data.clear(); get_lang(context)
+    # Data is cleared here, which is the correct place
+    context.user_data.clear()
     
     keyboard = [
         [InlineKeyboardButton(t('add_user_btn', context), callback_data='go_add_user'),
@@ -171,14 +172,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     reply_markup = InlineKeyboardMarkup(keyboard)
     message_text = t('main_menu_prompt', context)
     chat_id = update.effective_chat.id
+    
+    # This logic correctly handles both /start command and button clicks
     if update.callback_query:
+        # If it's a button click, edit the message to show the main menu
         try:
-            await update.callback_query.message.delete()
-        except BadRequest as e:
-            if "Message to delete not found" not in str(e): logger.error(f"Error deleting message: {e}")
-        await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup)
+            await update.callback_query.message.edit_text(message_text, reply_markup=reply_markup)
+        except BadRequest:
+            # If editing fails (e.g., message is too old), send a new one
+            await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup)
     else:
+        # If it's the /start command, reply with a new message
         await update.message.reply_text(text=message_text, reply_markup=reply_markup)
+        
     return MAIN_MENU
 
 async def show_node_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -189,11 +195,7 @@ async def show_node_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     message_text = t('select_node_prompt', context)
     query = update.callback_query
     if query:
-        try:
-            await query.message.delete()
-        except BadRequest as e:
-            if "Message to delete not found" not in str(e): logger.error(f"Error deleting message: {e}")
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=message_text, reply_markup=reply_markup)
+        await query.message.edit_text(text=message_text, reply_markup=reply_markup)
     return NODE_LIST
 
 async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -216,11 +218,8 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         keyboard = [[b] for b in buttons] if len(buttons) > 1 else [buttons]; keyboard.append([InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')])
         await query.message.edit_text(t('select_node_restart_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard)); return SELECT_NODE_RESTART
     if action == 'go_change_language':
-        try:
-            await query.message.delete()
-        except BadRequest: pass
         keyboard = [[InlineKeyboardButton("English 🇬🇧", callback_data='set_lang_en'), InlineKeyboardButton("Русский 🇷🇺", callback_data='set_lang_ru'), InlineKeyboardButton("فارسی 🇮🇷", callback_data='set_lang_fa')], [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=t('select_language_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard)); return SELECTING_LANGUAGE
+        await query.message.edit_text(text=t('select_language_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard)); return SELECTING_LANGUAGE
     return MAIN_MENU
 
 # START of Add User Functions
@@ -437,8 +436,10 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         parse_mode=ParseMode.HTML,
         reply_markup=reply_markup
     )
+    
+    # DO NOT CLEAR USER DATA HERE! This was the problem.
+    # context.user_data.clear() 
         
-    context.user_data.clear()
     return MAIN_MENU
 
 async def set_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -560,29 +561,28 @@ async def delete_user_confirmation_handler(update: Update, context: ContextTypes
 
     username = context.user_data.get('user_data', {}).get('username', '')
 
-    await query.message.delete()
-
     if action == 'cancel_delete':
+        await query.message.delete()
         return await show_user_card(update, context)
 
     if action == 'confirm_delete':
         user_uuid = context.user_data.get('user_uuid')
         if not user_uuid:
-            await context.bot.send_message(chat_id=query.message.chat_id, text="Error: User UUID not found.")
+            await query.message.edit_text("Error: User UUID not found.")
             return await start(update, context)
 
         _, error = api_request('DELETE', f'/api/users/{user_uuid}')
-
-        if error:
-            await context.bot.send_message(chat_id=query.message.chat_id, text=f"❌ Error deleting user: {error}")
-        else:
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=t('user_deleted_success', context, username=html.escape(username)),
-                parse_mode=ParseMode.HTML
-            )
         
-        return await start(update, context)
+        text_to_show = ""
+        if error:
+            text_to_show = f"❌ Error deleting user: {error}"
+        else:
+            text_to_show = t('user_deleted_success', context, username=html.escape(username))
+        
+        await query.message.edit_text(text_to_show, parse_mode=ParseMode.HTML)
+        
+        # After showing the result, it's better to end the conversation here or wait for user to go back
+        return ConversationHandler.END # or return await start(update, context)
         
     return USER_MENU
 
@@ -594,8 +594,6 @@ async def back_to_user_info_handler(update: Update, context: ContextTypes.DEFAUL
 async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         await update.message.delete()
-        prompt_message = await context.bot.send_message(chat_id=update.effective_chat.id, text="...")
-        await prompt_message.delete()
     except BadRequest: pass
 
     if not context.user_data.get('user_uuid'): return await start(update, context)
@@ -606,11 +604,15 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         elif context.user_data.get('editing') == 'expire':
             days = int(update.message.text); payload = {"expireAt": (datetime.now(timezone.utc) + timedelta(days=days)).isoformat().replace('+00:00', 'Z')}
     except (ValueError, TypeError):
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=t('invalid_number', context)); return await show_user_card(update, context)
-    
+        msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('invalid_number', context))
+        context.job_queue.run_once(lambda job: job.context.delete(), 5, context=msg)
+        return AWAITING_LIMIT # Or expire depending on state
+
     user_uuid = context.user_data.get('user_uuid')
     _, error = api_request('PATCH', f'/api/users/{user_uuid}', payload=payload)
-    if error: await context.bot.send_message(chat_id=update.effective_chat.id, text=t('update_failed', context, error=error))
+    if error: 
+        msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('update_failed', context, error=error))
+        context.job_queue.run_once(lambda job: job.context.delete(), 5, context=msg)
     
     return await show_user_card(update, context)
 
@@ -618,11 +620,12 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def logs_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer(); action = query.data
     if action == 'back_to_main': return await start(update, context)
-    if action == 'go_view_logs': return await show_node_list(update, context)
-    try: await query.message.delete()
-    except BadRequest: pass
-    node_name = action.split('_')[1]; context.user_data['selected_node'] = node_name
-    message = await context.bot.send_message(chat_id=query.message.chat_id, text=t('fetching_logs', context, node_name=node_name), parse_mode=ParseMode.HTML)
+    
+    node_name = query.data.split('_')[1]; context.user_data['selected_node'] = node_name
+    
+    # Edit the message to show "fetching"
+    await query.message.edit_text(text=t('fetching_logs', context, node_name=node_name), parse_mode=ParseMode.HTML)
+    
     logs, error = get_logs_from_node(node_name); MAX_LOG_LENGTH = 3800
     if logs and len(logs) > MAX_LOG_LENGTH: logs = f"...\n{logs[-MAX_LOG_LENGTH:]}"
     if error:
@@ -632,7 +635,8 @@ async def logs_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         safe_logs = html.escape(logs or t('logs_empty', context))
         message_text = f"{t('logs_title', context, node_name=node_name)}\n\n<pre><code>{safe_logs}</code></pre>"
         keyboard = [[InlineKeyboardButton(t('refresh_logs_btn', context), callback_data=f'lognode_{node_name}')], [InlineKeyboardButton(t('back_to_nodes_btn', context), callback_data='go_view_logs')]]
-    await message.edit_text(text=message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    
+    await query.message.edit_text(text=message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
     return VIEWING_LOGS
 
 async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -666,22 +670,29 @@ async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 def main() -> None:
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     
-    # ======================================================================
-    # ========= vvvvvvvvvvv THE FINAL CHANGE IS HERE vvvvvvvvvvv =========
-    # ======================================================================
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            MAIN_MENU: [CallbackQueryHandler(main_menu_handler), CallbackQueryHandler(start, pattern='^back_to_main$')],
-            SELECTING_LANGUAGE: [CallbackQueryHandler(set_lang_callback, pattern='^set_lang_'), CallbackQueryHandler(start, pattern='^back_to_main$')],
+            MAIN_MENU: [
+                CallbackQueryHandler(main_menu_handler),
+                # This explicitly handles the 'back_to_main' button inside the main menu state
+                CallbackQueryHandler(start, pattern='^back_to_main$')
+            ],
+            SELECTING_LANGUAGE: [CallbackQueryHandler(set_lang_callback, pattern='^set_lang_')],
             AWAITING_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_user_card)],
             USER_MENU: [CallbackQueryHandler(user_menu_handler)],
             QR_VIEW: [CallbackQueryHandler(back_to_user_info_handler, pattern='^back_to_user_info$')],
             AWAITING_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
             AWAITING_EXPIRE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
-            NODE_LIST: [CallbackQueryHandler(logs_node_handler)],
-            VIEWING_LOGS: [CallbackQueryHandler(logs_node_handler)],
-            SELECT_NODE_RESTART: [CallbackQueryHandler(restart_node_handler, pattern='^restartnode_'), CallbackQueryHandler(main_menu_handler, pattern='^go_restart_nodes$'), CallbackQueryHandler(start, pattern='^back_to_main$')],
+            NODE_LIST: [
+                CallbackQueryHandler(logs_node_handler, pattern='^lognode_'),
+                CallbackQueryHandler(start, pattern='^back_to_main$')
+            ],
+            VIEWING_LOGS: [
+                CallbackQueryHandler(logs_node_handler, pattern='^lognode_'),
+                CallbackQueryHandler(show_node_list, pattern='^go_view_logs$')
+            ],
+            SELECT_NODE_RESTART: [CallbackQueryHandler(restart_node_handler, pattern='^restartnode_')],
             CONFIRM_DELETE: [CallbackQueryHandler(delete_user_confirmation_handler)],
             
             # Add User States
@@ -692,13 +703,13 @@ def main() -> None:
             AWAITING_HWID_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_hwid_value)],
             SELECTING_SQUADS: [CallbackQueryHandler(squad_selection_handler, pattern='^squad_|^create_user_final$')]
         },
-        # Adding the back_to_main handler to fallbacks makes it work globally
-        fallbacks=[CommandHandler('start', start), CallbackQueryHandler(start, pattern='^back_to_main$')], 
+        # This fallback makes sure '/start' and the "Back to Main Menu" button work from ANY state
+        fallbacks=[
+            CommandHandler('start', start),
+            CallbackQueryHandler(start, pattern='^back_to_main$')
+        ], 
         allow_reentry=True
     )
-    # ======================================================================
-    # ========= ^^^^^^^^^^^ THE FINAL CHANGE IS HERE ^^^^^^^^^^^ =========
-    # ======================================================================
     
     application.add_handler(conv_handler)
     logger.info("Bot is running...")
