@@ -309,59 +309,88 @@ async def handle_new_expire(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return AWAITING_HWID_CHOICE
 
 async def handle_hwid_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    
+    query = getattr(update, "callback_query", None)
+    if query:
+        await query.answer()
+
     prompt_message_id = context.user_data.pop('prompt_message_id', None)
     if prompt_message_id:
-        try: await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_message_id)
-        except BadRequest: pass
-        
-    if query.data == 'hwid_disable':
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_message_id)
+        except BadRequest:
+            pass
+
+    if query and query.data == 'hwid_disable':
         context.user_data['new_user']['hwidDeviceLimit'] = 0
         return await ask_for_squads_handler(update, context)
-    elif query.data == 'hwid_set_limit':
-        sent_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('ask_for_hwid_limit_value_prompt', context), parse_mode=ParseMode.HTML)
+
+    elif query and query.data == 'hwid_set_limit':
+        sent_message = await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=t('ask_for_hwid_limit_value_prompt', context),
+            parse_mode=ParseMode.HTML
+        )
         context.user_data['prompt_message_id'] = sent_message.message_id
         return AWAITING_HWID_LIMIT
+
 
 async def handle_hwid_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         limit = int(update.message.text)
         context.user_data['new_user']['hwidDeviceLimit'] = limit
     except (ValueError, TypeError):
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=t('invalid_number', context))
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=t('invalid_number', context)
+        )
         return AWAITING_HWID_LIMIT
 
     prompt_message_id = context.user_data.pop('prompt_message_id', None)
     if prompt_message_id:
-        try: await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_message_id)
-        except BadRequest: pass
-    await update.message.delete()
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_message_id)
+        except BadRequest:
+            pass
+
+    try:
+        await update.message.delete()
+    except BadRequest:
+        pass
+
+    # بعد از گرفتن عدد، مرحله بعد (انتخاب گروه‌ها)
     return await ask_for_squads_handler(update, context)
 
+
+# --- Squad Selection Handlers ---
+
 async def ask_for_squads_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
+    query = getattr(update, "callback_query", None)
+    message = getattr(update, "message", None)
     chat_id = update.effective_chat.id
 
-    # If this is a button press, answer the callback query
     if query:
         await query.answer()
 
-    # Initialize squad list in user_data if not present
+    # آماده‌سازی داده‌ی کاربر
     if 'selected_squads' not in context.user_data.get('new_user', {}):
         context.user_data['new_user']['selected_squads'] = []
 
-    # Fetch squads from API
+    # گرفتن داده از API
     data, error = api_request('GET', '/api/internal-squads')
+    logger.info(f"Squad API Response: {data}, Error: {error}")
+
     if error:
-        await context.bot.send_message(chat_id=chat_id, text=t('error_squad_fetch', context, error=error))
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=t('error_squad_fetch', context, error=error)
+        )
         return await start(update, context)
-    
-    # Build the keyboard based on current selection
+
     squads = data.get('response', [])
-    keyboard = []
     selected_squads = context.user_data['new_user']['selected_squads']
+
+    # ساخت کیبورد انتخابی
+    keyboard = []
     for squad in squads:
         squad_name = squad.get('name')
         squad_uuid = squad.get('uuid')
@@ -369,26 +398,33 @@ async def ask_for_squads_handler(update: Update, context: ContextTypes.DEFAULT_T
         button_text = f"✅ {squad_name}" if is_selected else squad_name
         keyboard.append([InlineKeyboardButton(button_text, callback_data=f"squad_{squad_uuid}")])
 
-    keyboard.append([InlineKeyboardButton(t('squad_selection_done_btn', context), callback_data='squad_done')])
+    keyboard.append([
+        InlineKeyboardButton(t('squad_selection_done_btn', context), callback_data='squad_done')
+    ])
     reply_markup = InlineKeyboardMarkup(keyboard)
     message_text = t('ask_for_squads_prompt', context)
 
-    # Decide whether to send a new message or edit an existing one
+    # تصمیم بین ادیت پیام قبلی یا ارسال پیام جدید
     if query:
-        # We are in a callback query context (e.g., toggling a squad or coming from HWID choice buttons),
-        # so we EDIT the existing message.
         try:
-            await query.edit_message_text(text=message_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+            await query.edit_message_text(
+                text=message_text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML
+            )
         except BadRequest as e:
-            logger.error(f"Error editing squad message: {e}")
+            await context.bot.send_message(chat_id=chat_id, text=f"Error editing squad message: {e}")
     else:
-        # We are in a message handler context (coming from entering the HWID limit number),
-        # so we SEND a new message because the previous prompt has been deleted.
-        sent_message = await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-        # Store the ID of this new message so we can edit it later when buttons are pressed
+        sent_message = await context.bot.send_message(
+            chat_id=chat_id,
+            text=message_text,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
+        )
         context.user_data['prompt_message_id'] = sent_message.message_id
-    
+
     return SELECTING_SQUADS
+
 
 async def handle_squad_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -397,25 +433,34 @@ async def handle_squad_selection(update: Update, context: ContextTypes.DEFAULT_T
 
     if action == 'squad_done':
         return await create_user_handler(update, context)
-        
+
     squad_uuid = action.split('_')[1]
     selected_squads = context.user_data['new_user']['selected_squads']
     if squad_uuid in selected_squads:
         selected_squads.remove(squad_uuid)
     else:
         selected_squads.append(squad_uuid)
-    
+
     return await ask_for_squads_handler(update, context)
 
+
+# --- Final User Creation Handler ---
+
 async def create_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    
+    query = getattr(update, "callback_query", None)
+    chat_id = update.effective_chat.id
+
     prompt_message_id = context.user_data.pop('prompt_message_id', None)
     if prompt_message_id:
-        try: await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_message_id)
-        except BadRequest: pass
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=prompt_message_id)
+        except BadRequest:
+            pass
 
-    await query.message.edit_text(t('creating_user', context))
+    if query:
+        await query.message.edit_text(t('creating_user', context))
+    else:
+        await context.bot.send_message(chat_id=chat_id, text=t('creating_user', context))
 
     new_user_data = context.user_data.get('new_user', {})
     payload = {
@@ -425,19 +470,27 @@ async def create_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         "hwidDeviceLimit": new_user_data.get('hwidDeviceLimit'),
         "internalSquadUuids": new_user_data.get('selected_squads', [])
     }
-    
-    # Filter out null values for keys that are optional
+
+    # حذف مقادیر None
     payload = {k: v for k, v in payload.items() if v is not None}
 
     data, error = api_request('POST', '/api/users', payload=payload)
+    logger.info(f"Create User API: {data}, Error: {error}")
 
     if error:
-        await query.message.edit_text(t('update_failed', context, error=error))
-        await context.bot.send_message(chat_id=query.message.chat_id, text=t('main_menu_prompt', context), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]))
+        await context.bot.send_message(chat_id=chat_id, text=t('update_failed', context, error=error))
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=t('main_menu_prompt', context),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]
+            ])
+        )
         return MAIN_MENU
 
-    await query.message.edit_text(t('user_created_success', context))
+    await context.bot.send_message(chat_id=chat_id, text=t('user_created_success', context))
     context.user_data['username'] = new_user_data.get('username')
+
     return await show_user_card(update, context)
 
 # --- End of New User Creation Handlers ---
