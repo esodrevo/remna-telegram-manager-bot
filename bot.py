@@ -193,7 +193,14 @@ async def show_node_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.message.edit_text(text=message_text, reply_markup=reply_markup)
     return NODE_LIST
 
-# تابع کمکی قبلی حذف شد چون دیگر به آن نیازی نیست
+def get_creation_date(user: dict):
+    created_at_str = user.get('createdAt')
+    if not created_at_str or not isinstance(created_at_str, str):
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        return datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
 
 async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer(); action = query.data
@@ -205,21 +212,18 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         users_data, error = api_request('GET', '/api/users')
         
         if not error and users_data and 'response' in users_data:
-            users_list = users_data.get('response')
-            
-            # حالا که می‌دانیم لیست شامل رشته است، به سادگی آخرین مورد را برمی‌داریم
-            if isinstance(users_list, list) and users_list:
-                try:
-                    # آخرین آیتم در لیست را به عنوان آخرین کاربر در نظر می‌گیریم
-                    last_item = users_list[-1]
-                    if isinstance(last_item, str):
-                        last_username = last_item
-                    # اگر آیتم آخر دیکشنری بود (برای سازگاری با نسخه‌های دیگر پنل)
-                    elif isinstance(last_item, dict) and 'username' in last_item:
-                        last_username = last_item['username']
+            response_obj = users_data.get('response')
+            if response_obj and isinstance(response_obj, dict):
+                users_list = response_obj.get('users')
+                
+                if users_list and isinstance(users_list, list):
+                    try:
+                        sorted_users = sorted(users_list, key=get_creation_date, reverse=True)
                         
-                except Exception as e:
-                    logger.error(f"Error getting last user from list: {e}")
+                        if sorted_users:
+                            last_username = sorted_users[0].get('username', "N/A")
+                    except Exception as e:
+                        logger.error(f"Error processing users list: {e}")
 
         context.user_data['new_user_data'] = {}
         prompt_text = t('ask_for_new_username_with_suggestion', context, last_user=last_username)
@@ -672,48 +676,6 @@ async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.message.edit_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
     return MAIN_MENU
 
-# ======================================================================
-# ========= vvvvvvvvvvvv این تابع دیباگ را اضافه کنید vvvvvvvvvvvv =========
-# ======================================================================
-async def debug_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """A safer, more robust version of the debug command."""
-    if not is_admin(update):
-        return
-
-    await update.message.reply_text("⏳ در حال فراخوانی `/api/users` (نسخه امن)...")
-    
-    try:
-        data, error = api_request('GET', '/api/users')
-        
-        debug_message = "--- 💻 نتیجه دیباگ API ---\n\n"
-        
-        if error:
-            debug_message += f"❌ خطا در درخواست API:\n<pre>{html.escape(str(error))}</pre>"
-        elif not data:
-            debug_message += "⚠️ پاسخ API موفق بود اما هیچ داده‌ای برنگرداند (پاسخ خالی)."
-        else:
-            # پاسخ کامل را به صورت متن خوانا و فرمت‌شده درمی‌آوریم
-            pretty_json = json.dumps(data, indent=2, ensure_ascii=False)
-            
-            # بررسی طول پیام برای جلوگیری از خطای تلگرام
-            max_len = 3800 # کمی کمتر از 4096 برای اطمینان
-            if len(pretty_json) > max_len:
-                truncated_json = pretty_json[:max_len] + "\n\n... (پاسخ برای نمایش کوتاه شده است)"
-                debug_message += f"✅ پاسخ API موفق بود (کوتاه شده):\n<pre>{html.escape(truncated_json)}</pre>"
-            else:
-                debug_message += f"✅ پاسخ API موفق بود:\n<pre>{html.escape(pretty_json)}</pre>"
-            
-        await update.message.reply_text(debug_message, parse_mode=ParseMode.HTML)
-
-    except Exception as e:
-        # هر خطای پیش‌بینی نشده‌ای را می‌گیریم و گزارش می‌دهیم
-        error_text = f"🚨 یک خطای غیرمنتظره در تابع دیباگ رخ داد:\n\n<pre>{html.escape(str(e))}</pre>"
-        logger.error(f"Unhandled exception in debug_api: {e}", exc_info=True)
-        await update.message.reply_text(error_text, parse_mode=ParseMode.HTML)
-# ======================================================================
-# ========= ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ =========
-# ======================================================================
-
 def main() -> None:
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     
@@ -749,8 +711,9 @@ def main() -> None:
         ], 
         allow_reentry=True
     )
-
-    application.add_handler(CommandHandler('debugapi', debug_api))
+    
+    # application.add_handler(CommandHandler('debugapi', debug_api))
+    
     application.add_handler(conv_handler)
     logger.info("Bot is running...")
     application.run_polling()
