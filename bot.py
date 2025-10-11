@@ -215,22 +215,49 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query; await query.answer(); action = query.data
     
     if action == 'go_add_user':
-        await query.message.edit_text(text="⏳ در حال دریافت آخرین کاربر ساخته شده...")
+        await query.message.edit_text(text="⏳ در حال دریافت آخرین کاربر (مرحله دیباگ)...")
+        
+        logger.info("--- STARTING DEBUG for 'go_add_user' ---")
         
         last_username = "N/A"
         users_data, error = api_request('GET', '/api/users')
         
-        if not error and users_data and 'response' in users_data:
-            users_list = users_data['response']
-            if users_list:
+        if error:
+            logger.error(f"API request failed with error: {error}")
+        elif not users_data:
+            logger.warning("API response was empty.")
+        else:
+            # لاگ کردن کل پاسخ دریافتی از API
+            logger.info(f"Full API Response received: {json.dumps(users_data, indent=2)}")
+            
+            users_list = users_data.get('response') # Using .get() for safety
+            
+            if not users_list:
+                logger.warning("The 'response' key in the API data is missing or empty.")
+            elif not isinstance(users_list, list):
+                 logger.warning(f"The 'response' key is not a list. It is of type: {type(users_list)}")
+            else:
+                logger.info(f"Successfully found {len(users_list)} users in the list.")
+                
+                # لاگ کردن ساختار اولین کاربر در لیست برای بررسی فیلدها
+                if users_list:
+                    logger.info(f"Structure of the first user object: {json.dumps(users_list[0], indent=2)}")
+
                 try:
-                    # استفاده از تابع کمکی جدید برای مرتب‌سازی امن
+                    # استفاده از تابع کمکی که قبلا نوشتیم
                     sorted_users = sorted(users_list, key=get_creation_date, reverse=True)
                     
                     if sorted_users:
                         last_username = sorted_users[0].get('username', "N/A")
+                        logger.info(f"Successfully sorted users. Latest user found: {last_username}")
+                    else:
+                        logger.warning("User list was not empty, but sorting resulted in an empty list.")
+
                 except Exception as e:
-                    logger.error(f"Error processing users list: {e}")
+                    # لاگ کردن هر خطایی که در زمان مرتب‌سازی رخ دهد
+                    logger.error(f"CRITICAL ERROR during sorting process: {e}", exc_info=True)
+
+        logger.info("--- ENDING DEBUG for 'go_add_user' ---")
 
         context.user_data['new_user_data'] = {}
         prompt_text = t('ask_for_new_username_with_suggestion', context, last_user=last_username)
