@@ -1,6 +1,6 @@
 # bot.py
 
-import logging, requests, json, subprocess, html, io, uuid, random, string
+import logging, requests, json, subprocess, html, io, uuid, random, string, re
 from urllib.parse import urlparse
 from datetime import datetime, timezone, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, InputMediaPhoto
@@ -30,8 +30,9 @@ COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("st
     MAIN_MENU, SELECTING_LANGUAGE, AWAITING_USERNAME, USER_MENU, AWAITING_LIMIT,
     AWAITING_EXPIRE, NODE_LIST, VIEWING_LOGS, QR_VIEW, SELECT_NODE_RESTART,
     CONFIRM_DELETE, AWAITING_NEW_USERNAME, AWAITING_DATA_LIMIT, AWAITING_EXPIRE_DAYS,
-    SELECTING_HWID_OPTION, AWAITING_HWID_VALUE, SELECTING_SQUADS
-) = range(17)
+    SELECTING_HWID_OPTION, AWAITING_HWID_VALUE, SELECTING_SQUADS, EDIT_ALL_USERS_MENU,
+    AWAITING_BULK_VALUE, CONFIRM_BULK_ACTION
+) = range(20)
 
 
 def get_lang_from_file() -> str:
@@ -183,6 +184,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
          InlineKeyboardButton(t('manage_user_btn', context), callback_data='go_manage_user')],
         [InlineKeyboardButton(t('view_logs_btn', context), callback_data='go_view_logs'),
          InlineKeyboardButton(t('restart_nodes_btn', context), callback_data='go_restart_nodes')],
+        [InlineKeyboardButton(t('edit_all_users_btn', context), callback_data='go_edit_all_users')],
         [InlineKeyboardButton(t('change_language_btn', context), callback_data='go_change_language')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -261,7 +263,161 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if action == 'go_change_language':
         keyboard = [[InlineKeyboardButton("English 🇬🇧", callback_data='set_lang_en'), InlineKeyboardButton("Русский 🇷🇺", callback_data='set_lang_ru'), InlineKeyboardButton("فارسی 🇮🇷", callback_data='set_lang_fa')], [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
         await query.message.edit_text(text=t('select_language_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard)); return SELECTING_LANGUAGE
+    if action == 'go_edit_all_users':
+        return await show_edit_all_users_menu(update, context)
     return MAIN_MENU
+
+# --- Start of Bulk Edit Feature ---
+
+async def show_edit_all_users_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    keyboard = [
+        [InlineKeyboardButton(t('bulk_edit_volume_btn', context), callback_data='bulk_edit_volume')],
+        [InlineKeyboardButton(t('bulk_edit_date_btn', context), callback_data='bulk_edit_date')],
+        [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text=t('edit_all_users_prompt', context), reply_markup=reply_markup)
+    return EDIT_ALL_USERS_MENU
+
+async def edit_all_users_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    action = query.data
+    context.user_data['bulk_edit_type'] = 'volume' if action == 'bulk_edit_volume' else 'date'
+    
+    prompt_text = t('ask_for_bulk_volume_change', context) if context.user_data['bulk_edit_type'] == 'volume' else t('ask_for_bulk_date_change', context)
+    
+    prompt_message = await query.message.edit_text(prompt_text, parse_mode=ParseMode.HTML)
+    context.user_data['prompt_message_id'] = prompt_message.message_id
+    return AWAITING_BULK_VALUE
+
+async def process_bulk_change_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        await update.message.delete()
+        prompt_message_id = context.user_data.get('prompt_message_id')
+        if not prompt_message_id: return MAIN_MENU
+    except BadRequest:
+        pass
+
+    text = update.message.text
+    match = re.match(r'^\s*([+-])\s*(\d+)\s*$', text)
+    if not match:
+        msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('invalid_bulk_input', context))
+        context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
+        return AWAITING_BULK_VALUE
+        
+    sign = match.group(1)
+    value = int(match.group(2))
+    change_value = value if sign == '+' else -value
+    context.user_data['bulk_change_value'] = change_value
+
+    await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=prompt_message_id, text=t('fetching_all_users', context))
+
+    users_data, error = api_request('GET', '/api/users')
+    if error or 'response' not in users_data or 'users' not in users_data['response']:
+        await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=prompt_message_id, text=t('error_fetching_all_users', context, error=error))
+        return MAIN_MENU
+        
+    all_users = users_data['response']['users']
+    context.user_data['bulk_users_list'] = all_users
+    
+    edit_type = context.user_data['bulk_edit_type']
+    change_type_text = t('change_type_volume', context) if edit_type == 'volume' else t('change_type_date', context)
+    change_value_text = f"+{change_value} GB" if edit_type == 'volume' else f"+{change_value} {t('days_unit', context)}"
+    if change_value < 0:
+        change_value_text = f"{change_value} GB" if edit_type == 'volume' else f"{change_value} {t('days_unit', context)}"
+
+    confirmation_text = t('confirm_bulk_update_prompt', context, 
+                          change_type=change_type_text, 
+                          change_value=change_value_text, 
+                          user_count=len(all_users))
+    
+    keyboard = [
+        [InlineKeyboardButton(t('confirm_btn', context), callback_data='confirm_bulk_action')],
+        [InlineKeyboardButton(t('cancel_btn', context), callback_data='cancel_bulk_action')]
+    ]
+    await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=prompt_message_id, 
+                                        text=confirmation_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    
+    return CONFIRM_BULK_ACTION
+
+async def confirm_bulk_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == 'cancel_bulk_action':
+        await query.message.edit_text(t('bulk_update_cancelled', context))
+        return await start(update, context)
+
+    user_count = len(context.user_data.get('bulk_users_list', []))
+    await query.message.edit_text(t('bulk_update_started', context, user_count=user_count), parse_mode=ParseMode.HTML)
+    
+    job_context = {
+        'chat_id': update.effective_chat.id,
+        'lang': get_lang(context),
+        'bulk_users_list': context.user_data['bulk_users_list'],
+        'bulk_edit_type': context.user_data['bulk_edit_type'],
+        'bulk_change_value': context.user_data['bulk_change_value']
+    }
+    context.job_queue.run_once(bulk_update_job, 1, context=job_context, name=f"bulk_update_{update.effective_chat.id}")
+    
+    return ConversationHandler.END
+
+async def bulk_update_job(context: ContextTypes.DEFAULT_TYPE):
+    job_data = context.job
+    chat_id = job_data.context['chat_id']
+    # A trick to use the 't' function inside a job
+    fake_context = type('obj', (object,), {'user_data': {'lang': job_data.context['lang']}})()
+    
+    users = job_data.context['bulk_users_list']
+    edit_type = job_data.context['bulk_edit_type']
+    change_value = job_data.context['bulk_change_value']
+    
+    success_count = 0
+    failed_count = 0
+    
+    for user in users:
+        user_uuid = user.get('uuid')
+        if not user_uuid:
+            failed_count += 1
+            continue
+            
+        payload = {}
+        if edit_type == 'volume':
+            current_limit = user.get('trafficLimitBytes')
+            if current_limit is None or current_limit == 0: # Skip unlimited users
+                continue
+            
+            bytes_to_change = change_value * (1024**3)
+            new_limit = current_limit + bytes_to_change
+            payload = {'trafficLimitBytes': max(0, new_limit)} # Ensure it's not negative
+        
+        elif edit_type == 'date':
+            current_expire_str = user.get('expireAt')
+            if not current_expire_str: # Skip users with no expiration
+                continue
+
+            current_expire_dt = parse_iso_date(current_expire_str)
+            if not current_expire_dt:
+                failed_count += 1
+                continue
+            
+            new_expire_dt = current_expire_dt + timedelta(days=change_value)
+            payload = {'expireAt': new_expire_dt.isoformat().replace('+00:00', 'Z')}
+            
+        if payload:
+            _, error = api_request('PATCH', f'/api/users/{user_uuid}', payload=payload)
+            if error:
+                failed_count += 1
+                logger.warning(f"Bulk update failed for user {user.get('username')}: {error}")
+            else:
+                success_count += 1
+
+    final_message = t('bulk_update_complete', fake_context, success_count=success_count, failed_count=failed_count)
+    await context.bot.send_message(chat_id=chat_id, text=final_message)
+
+# --- End of Bulk Edit Feature ---
 
 async def get_new_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['new_user_data']['username'] = update.message.text
@@ -719,7 +875,12 @@ def main() -> None:
             AWAITING_EXPIRE_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_expire_days)],
             SELECTING_HWID_OPTION: [CallbackQueryHandler(hwid_option_handler, pattern='^hwid_')],
             AWAITING_HWID_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_hwid_value)],
-            SELECTING_SQUADS: [CallbackQueryHandler(squad_selection_handler, pattern='^squad_|^create_user_final$')]
+            SELECTING_SQUADS: [CallbackQueryHandler(squad_selection_handler, pattern='^squad_|^create_user_final$')],
+            
+            # Bulk Edit States
+            EDIT_ALL_USERS_MENU: [CallbackQueryHandler(edit_all_users_menu_handler, pattern='^bulk_edit_')],
+            AWAITING_BULK_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_bulk_change_value)],
+            CONFIRM_BULK_ACTION: [CallbackQueryHandler(confirm_bulk_action_handler, pattern='^(confirm|cancel)_bulk_action$')]
         },
         fallbacks=[
             CommandHandler('start', start),
