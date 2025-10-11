@@ -335,20 +335,21 @@ async def handle_hwid_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def handle_hwid_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    chat_id = update.effective_chat.id
     try:
+        await context.bot.send_message(chat_id=chat_id, text="📥 [DEBUG] وارد تابع handle_hwid_limit شدیم")
+
         limit = int(update.message.text)
         context.user_data['new_user']['hwidDeviceLimit'] = limit
+        await context.bot.send_message(chat_id=chat_id, text=f"✅ مقدار HWID limit: {limit}")
     except (ValueError, TypeError):
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=t('invalid_number', context)
-        )
+        await context.bot.send_message(chat_id=chat_id, text="❌ عدد واردشده نامعتبر است.")
         return AWAITING_HWID_LIMIT
 
     prompt_message_id = context.user_data.pop('prompt_message_id', None)
     if prompt_message_id:
         try:
-            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_message_id)
+            await context.bot.delete_message(chat_id=chat_id, message_id=prompt_message_id)
         except BadRequest:
             pass
 
@@ -357,39 +358,42 @@ async def handle_hwid_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     except BadRequest:
         pass
 
-    # بعد از گرفتن عدد، مرحله بعد (انتخاب گروه‌ها)
+    await context.bot.send_message(chat_id=chat_id, text="➡️ حالا وارد ask_for_squads_handler می‌شویم...")
     return await ask_for_squads_handler(update, context)
 
 
-# --- Squad Selection Handlers ---
 
 async def ask_for_squads_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    chat_id = update.effective_chat.id
     query = getattr(update, "callback_query", None)
     message = getattr(update, "message", None)
-    chat_id = update.effective_chat.id
+
+    await context.bot.send_message(chat_id=chat_id, text="📥 [DEBUG] وارد ask_for_squads_handler شدیم")
 
     if query:
         await query.answer()
 
-    # آماده‌سازی داده‌ی کاربر
-    if 'selected_squads' not in context.user_data.get('new_user', {}):
+    # بررسی داده new_user
+    if 'new_user' not in context.user_data:
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ context.user_data['new_user'] وجود ندارد!")
+        return MAIN_MENU
+
+    if 'selected_squads' not in context.user_data['new_user']:
         context.user_data['new_user']['selected_squads'] = []
 
-    # گرفتن داده از API
     data, error = api_request('GET', '/api/internal-squads')
-    logger.info(f"Squad API Response: {data}, Error: {error}")
+    await context.bot.send_message(chat_id=chat_id, text=f"📡 [DEBUG] پاسخ API دریافت شد: error={error}")
 
     if error:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=t('error_squad_fetch', context, error=error)
-        )
+        await context.bot.send_message(chat_id=chat_id, text=f"❌ خطا در API: {error}")
         return await start(update, context)
 
     squads = data.get('response', [])
-    selected_squads = context.user_data['new_user']['selected_squads']
+    if not squads:
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ هیچ squadی از API دریافت نشد!")
+        return MAIN_MENU
 
-    # ساخت کیبورد انتخابی
+    selected_squads = context.user_data['new_user']['selected_squads']
     keyboard = []
     for squad in squads:
         squad_name = squad.get('name')
@@ -398,23 +402,12 @@ async def ask_for_squads_handler(update: Update, context: ContextTypes.DEFAULT_T
         button_text = f"✅ {squad_name}" if is_selected else squad_name
         keyboard.append([InlineKeyboardButton(button_text, callback_data=f"squad_{squad_uuid}")])
 
-    keyboard.append([
-        InlineKeyboardButton(t('squad_selection_done_btn', context), callback_data='squad_done')
-    ])
+    keyboard.append([InlineKeyboardButton("✔️ انجام شد", callback_data='squad_done')])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    message_text = t('ask_for_squads_prompt', context)
 
-    # تصمیم بین ادیت پیام قبلی یا ارسال پیام جدید
-    if query:
-        try:
-            await query.edit_message_text(
-                text=message_text,
-                reply_markup=reply_markup,
-                parse_mode=ParseMode.HTML
-            )
-        except BadRequest as e:
-            await context.bot.send_message(chat_id=chat_id, text=f"Error editing squad message: {e}")
-    else:
+    message_text = "📋 لطفاً گروه‌های مورد نظر را انتخاب کنید:"
+
+    try:
         sent_message = await context.bot.send_message(
             chat_id=chat_id,
             text=message_text,
@@ -422,6 +415,9 @@ async def ask_for_squads_handler(update: Update, context: ContextTypes.DEFAULT_T
             parse_mode=ParseMode.HTML
         )
         context.user_data['prompt_message_id'] = sent_message.message_id
+        await context.bot.send_message(chat_id=chat_id, text="✅ [DEBUG] پیام انتخاب squad ارسال شد.")
+    except Exception as e:
+        await context.bot.send_message(chat_id=chat_id, text=f"❌ خطا در ارسال پیام squad: {e}")
 
     return SELECTING_SQUADS
 
