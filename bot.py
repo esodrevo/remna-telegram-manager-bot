@@ -1,4 +1,4 @@
-# bot.py (نسخه نهایی با Payload کاملاً منطبق)
+# bot.py (نسخه نهایی با Payload کاملاً منطبق بر مستندات دقیق)
 
 import logging, requests, json, subprocess, html, io
 from urllib.parse import urlparse
@@ -313,7 +313,6 @@ async def fetch_and_show_squads(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     chat_id = update.effective_chat.id
     
-    # Send a new message for squad selection, then store its ID
     prompt_message = await context.bot.send_message(chat_id=chat_id, text=t('select_squads_prompt', context))
     context.user_data['prompt_message_id'] = prompt_message.message_id
 
@@ -381,27 +380,27 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     traffic_limit = new_user_info.get('trafficLimitBytes')
     hwid_limit = new_user_info.get('hwidDeviceLimit')
 
-    # === PAYLOAD FIX V5 (FINAL) STARTS HERE ===
-    # This version sends all required fields, including empty passwords.
+    # === PAYLOAD FIX (FINAL VERSION) STARTS HERE ===
+    # This version matches the latest documentation screenshot exactly.
     payload = {
         "username": username,
         "status": "ACTIVE",
-        "trojanPassword": "",
-        "vlessUuid": "",
-        "ssPassword": "",
+        "trojanPassword": "",   # Added this required field
+        "vlessUuid": "",        # Added this required field
+        "ssPassword": "",       # Added this required field
         "trafficLimitBytes": traffic_limit,
         "trafficLimitStrategy": "NO_RESET",
         "expireAt": new_user_info.get('expireAt'),
         "description": "",
         "tag": "",
         "email": "",
-        "telegramId": "",
+        "telegramId": 0,        # Changed type from "" to 0
         "hwidDeviceLimit": hwid_limit,
-        "activeInternalSquads": [{"uuid": uuid} for uuid in selected_squad_uuids]
+        "activeInternalSquads": selected_squad_uuids # Changed from list of objects to list of strings
     }
-    # === PAYLOAD FIX V5 (FINAL) ENDS HERE ===
+    # === PAYLOAD FIX (FINAL VERSION) ENDS HERE ===
     
-    logger.info(f"PAYLOAD SENT TO API: {json.dumps(payload, indent=2)}")
+    logger.info(f"FINAL PAYLOAD SENT TO API: {json.dumps(payload, indent=2)}")
     
     _, error = api_request('POST', '/api/users', payload=payload)
     
