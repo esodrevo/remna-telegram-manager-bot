@@ -159,6 +159,9 @@ async def post_init(application: Application):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update): return ConversationHandler.END
     
+    context.user_data.clear()
+    get_lang(context)
+    
     keyboard = [
         [InlineKeyboardButton(t('add_user_btn', context), callback_data='go_add_user'),
          InlineKeyboardButton(t('manage_user_btn', context), callback_data='go_manage_user')],
@@ -177,8 +180,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     else:
         await update.message.reply_text(text=message_text, reply_markup=reply_markup)
         
-    context.user_data.clear()
-    
     return MAIN_MENU
 
 async def show_node_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -649,12 +650,12 @@ def main() -> None:
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     
     # ======================================================================
-    # ========= vvvvvvvvvvvv این بخش اصلاح شده است vvvvvvvvvvvv =========
+    # ========= vvvvvvvvvv این بخش دلیل اصلی مشکل بود و اصلاح شد vvvvvvvvvvv
     # ======================================================================
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            # این کنترل‌کننده حالا فقط به دکمه‌هایی که با "go_" شروع می‌شوند واکنش نشان می‌دهد
+            # کنترل‌کننده اصلی منو حالا فقط به دکمه‌هایی که با "go_" شروع می‌شوند پاسخ می‌دهد
             MAIN_MENU: [CallbackQueryHandler(main_menu_handler, pattern="^go_")],
             SELECTING_LANGUAGE: [CallbackQueryHandler(set_lang_callback, pattern='^set_lang_')],
             AWAITING_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_user_card)],
@@ -685,9 +686,6 @@ def main() -> None:
         ], 
         allow_reentry=True
     )
-    # ======================================================================
-    # ========= ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ =========
-    # ======================================================================
     
     application.add_handler(conv_handler)
     logger.info("Bot is running...")
