@@ -161,7 +161,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update): return ConversationHandler.END
     context.user_data.clear(); get_lang(context)
     
-    # MODIFIED: New main menu layout
     keyboard = [
         [InlineKeyboardButton(t('add_user_btn', context), callback_data='go_add_user'),
          InlineKeyboardButton(t('manage_user_btn', context), callback_data='go_manage_user')],
@@ -254,9 +253,7 @@ async def get_data_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return AWAITING_EXPIRE_DAYS
     except (ValueError, TypeError):
-        # Notify user of invalid input and ask again
         msg = await update.message.reply_text(t('invalid_number', context))
-        # Schedule deletion of the error message after a few seconds
         context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
         return AWAITING_DATA_LIMIT
 
@@ -376,7 +373,7 @@ async def squad_selection_handler(update: Update, context: ContextTypes.DEFAULT_
     keyboard = build_squad_keyboard(context)
     try:
         await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
-    except BadRequest: pass # Ignore if the menu is not modified
+    except BadRequest: pass
     return SELECTING_SQUADS
     
 async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -390,16 +387,19 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         parse_mode=ParseMode.HTML
     )
     
-    # FINAL: Payload is now correct based on the provided API documentation
+    # === PAYLOAD FIX STARTS HERE ===
+    # Added "status" and "trafficLimitStrategy" which are required by the API.
     payload = {
         "username": username,
+        "status": "ACTIVE", # This field was missing
         "trafficLimitBytes": new_user_info.get('trafficLimitBytes'),
+        "trafficLimitStrategy": "NO_RESET", # This field was missing
         "expireAt": new_user_info.get('expireAt'),
         "hwidDeviceLimit": new_user_info.get('hwidDeviceLimit'),
         "activeInternalSquads": [{"uuid": uuid} for uuid in selected_squad_uuids]
     }
+    # === PAYLOAD FIX ENDS HERE ===
     
-    # FINAL: Endpoint is correct based on the API docs
     _, error = api_request('POST', '/api/users', payload=payload)
     
     if error:
@@ -590,7 +590,6 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     except (ValueError, TypeError):
         await context.bot.send_message(chat_id=update.effective_chat.id, text=t('invalid_number', context)); return await show_user_card(update, context)
     
-    # Use PATCH with UUID for updating existing users
     user_uuid = context.user_data.get('user_uuid')
     _, error = api_request('PATCH', f'/api/users/{user_uuid}', payload=payload)
     if error: await context.bot.send_message(chat_id=update.effective_chat.id, text=t('update_failed', context, error=error))
