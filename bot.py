@@ -189,9 +189,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if hasattr(update, 'callback_query') and update.callback_query:
         query = update.callback_query
         try:
-            await query.message.edit_text(message_text, reply_markup=reply_markup)
+            # Delete the previous message (e.g., the success report) before showing the menu
+            await query.message.delete()
         except BadRequest:
-            await context.bot.send_message(chat_id=query.effective_chat.id, text=message_text, reply_markup=reply_markup)
+            pass # Ignore if message is already deleted
+        await context.bot.send_message(chat_id=query.effective_chat.id, text=message_text, reply_markup=reply_markup)
     elif hasattr(update, 'message') and update.message:
          await update.message.reply_text(text=message_text, reply_markup=reply_markup)
     else:
@@ -354,7 +356,7 @@ async def confirm_bulk_action_handler(update: Update, context: ContextTypes.DEFA
     await query.message.edit_text(t('bulk_update_started', context, user_count=user_count), parse_mode=ParseMode.HTML)
     
     background_task_data = {
-        'bot': context.bot, # Pass the bot object for cleaner code
+        'bot': context.bot,
         'chat_id': update.effective_chat.id,
         'message_id_to_delete': query.message.message_id,
         'lang': get_lang(context),
@@ -447,10 +449,11 @@ async def run_bulk_update_background(task_data: dict):
                               failed_count=failed_count, 
                               skipped_count=skipped_count,
                               skipped_reason_unlimited=job_t('skipped_reason_unlimited'))
-        keyboard = [[InlineKeyboardButton(job_t('back_to_main_menu_btn'), callback_data='back_to_main')]]
+        
+        # *** THE FIX IS HERE: Use 'go_main_menu' for the callback_data ***
+        keyboard = [[InlineKeyboardButton(job_t('back_to_main_menu_btn'), callback_data='go_main_menu')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # *** THE FIX IS HERE: Add parse_mode=ParseMode.HTML ***
         await bot.send_message(
             chat_id=chat_id, 
             text=final_message, 
@@ -464,7 +467,6 @@ async def run_bulk_update_background(task_data: dict):
         await bot.send_message(chat_id=chat_id, text=error_message, parse_mode=ParseMode.MARKDOWN)
     
     finally:
-        # *** THE FIX IS HERE: Always delete the "in progress" message ***
         try:
             await bot.delete_message(chat_id=chat_id, message_id=task_data['message_id_to_delete'])
         except Exception as e:
@@ -671,7 +673,7 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     
     data, error = await asyncio.to_thread(api_request, 'POST', '/api/users', payload=payload)
     
-    keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
+    keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='go_main_menu')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if error:
@@ -714,7 +716,7 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     data, error = await asyncio.to_thread(api_request, 'GET', f'/api/users/by-username/{username_to_fetch}')
 
     if error:
-        await sent_message.edit_text(t('error_fetching', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])); return AWAITING_USERNAME
+        await sent_message.edit_text(t('error_fetching', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='go_main_menu')]])); return AWAITING_USERNAME
     user_data = data.get('response', {});
     context.user_data['user_data'] = user_data; context.user_data['user_uuid'] = user_data.get('uuid')
     message_text = build_user_info_message(user_data, context)
@@ -822,7 +824,7 @@ async def delete_user_confirmation_handler(update: Update, context: ContextTypes
         else:
             final_text = t('user_deleted_success', context, username=html.escape(username))
         
-        await query.message.edit_text(text=final_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]))
+        await query.message.edit_text(text=final_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='go_main_menu')]]))
         return MAIN_MENU
         
     return USER_MENU
@@ -938,7 +940,6 @@ def main() -> None:
             SELECT_NODE_RESTART: [CallbackQueryHandler(restart_node_handler, pattern='^restartnode_')],
             CONFIRM_DELETE: [CallbackQueryHandler(delete_user_confirmation_handler)],
             
-            # Add User States
             AWAITING_NEW_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_new_username)],
             AWAITING_DATA_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_data_limit)],
             AWAITING_EXPIRE_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_expire_days)],
@@ -946,7 +947,6 @@ def main() -> None:
             AWAITING_HWID_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_hwid_value)],
             SELECTING_SQUADS: [CallbackQueryHandler(squad_selection_handler, pattern='^squad_|^create_user_final$')],
             
-            # Bulk Edit States
             EDIT_ALL_USERS_MENU: [CallbackQueryHandler(edit_all_users_menu_handler, pattern='^bulk_edit_')],
             AWAITING_BULK_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_bulk_change_value)],
             CONFIRM_BULK_ACTION: [CallbackQueryHandler(confirm_bulk_action_handler, pattern='^(confirm|cancel)_bulk_action$')]
@@ -959,6 +959,9 @@ def main() -> None:
     )
     
     application.add_handler(conv_handler)
+    # *** THE FIX IS HERE: Add a global handler for 'go_main_menu' ***
+    application.add_handler(CallbackQueryHandler(start, pattern='^go_main_menu$'))
+    
     logger.info("Bot is running...")
     application.run_polling()
 
