@@ -382,7 +382,8 @@ async def ask_for_squads_handler(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data['new_user']['selected_squads'] = []
 
     data, error = api_request('GET', '/api/internal-squads')
-    await context.bot.send_message(chat_id=chat_id, text=f"📡 [DEBUG] پاسخ API دریافت شد: error={error}")
+    logger.info(f"[DEBUG] داده‌ی squads از API: {data}")
+    await context.bot.send_message(chat_id=chat_id, text=f"[DEBUG] داده‌ی squads: {data}")
 
     if error:
         await context.bot.send_message(chat_id=chat_id, text=f"❌ خطا در API: {error}")
