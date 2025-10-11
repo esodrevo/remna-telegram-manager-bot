@@ -1,4 +1,4 @@
-# bot.py (نسخه عیب‌یابی)
+# bot.py (نسخه عیب‌یابی نهایی با لاگ مرحله به مرحله)
 
 import logging, requests, json, subprocess, html, io
 from urllib.parse import urlparse
@@ -200,6 +200,7 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query; await query.answer(); action = query.data
     
     if action == 'go_add_user':
+        logger.info("Starting 'Add User' flow.")
         context.user_data['new_user_data'] = {}
         prompt_message = await query.message.edit_text(t('ask_for_new_username', context))
         context.user_data['prompt_message_id'] = prompt_message.message_id
@@ -226,17 +227,22 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 # START of Add User Functions
 
 async def get_new_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['new_user_data']['username'] = update.message.text
     try:
-        await update.message.delete()
-    except BadRequest: pass
-    await context.bot.edit_message_text(
-        chat_id=update.effective_chat.id,
-        message_id=context.user_data.get('prompt_message_id'),
-        text=t('ask_for_data_limit', context),
-        parse_mode=ParseMode.HTML
-    )
-    return AWAITING_DATA_LIMIT
+        context.user_data['new_user_data']['username'] = update.message.text
+        logger.info(f"Step 1: Received username '{update.message.text}'.")
+        try:
+            await update.message.delete()
+        except BadRequest: pass
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=context.user_data.get('prompt_message_id'),
+            text=t('ask_for_data_limit', context),
+            parse_mode=ParseMode.HTML
+        )
+        return AWAITING_DATA_LIMIT
+    except Exception as e:
+        logger.error(f"Error in get_new_username: {e}")
+        return ConversationHandler.END
 
 
 async def get_data_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -244,6 +250,7 @@ async def get_data_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         limit_gb = int(update.message.text)
         if limit_gb < 0: raise ValueError
         context.user_data['new_user_data']['trafficLimitBytes'] = limit_gb * (1024**3)
+        logger.info(f"Step 2: Received data limit '{limit_gb} GB'.")
         await update.message.delete()
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
@@ -255,6 +262,9 @@ async def get_data_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         msg = await update.message.reply_text(t('invalid_number', context))
         context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
         return AWAITING_DATA_LIMIT
+    except Exception as e:
+        logger.error(f"Error in get_data_limit: {e}")
+        return ConversationHandler.END
 
 async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
@@ -262,7 +272,7 @@ async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if days < 0: raise ValueError
         expire_date = datetime.now(timezone.utc) + timedelta(days=days)
         context.user_data['new_user_data']['expireAt'] = expire_date.isoformat().replace('+00:00', 'Z')
-        
+        logger.info(f"Step 3: Received expire days '{days}'.")
         await update.message.delete()
         
         keyboard = [
@@ -280,61 +290,78 @@ async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         msg = await update.message.reply_text(t('invalid_number', context))
         context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
         return AWAITING_EXPIRE_DAYS
+    except Exception as e:
+        logger.error(f"Error in get_expire_days: {e}")
+        return ConversationHandler.END
 
 async def hwid_option_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    action = query.data
+    try:
+        query = update.callback_query
+        await query.answer()
+        action = query.data
 
-    if action == 'hwid_disable':
-        context.user_data['new_user_data']['hwidDeviceLimit'] = 0
-        return await fetch_and_show_squads(update, context)
-    
-    elif action == 'hwid_set_value':
-        await query.message.edit_text(t('ask_for_hwid_value', context))
-        context.user_data['prompt_message_id'] = query.message.message_id
-        return AWAITING_HWID_VALUE
+        if action == 'hwid_disable':
+            context.user_data['new_user_data']['hwidDeviceLimit'] = 0
+            logger.info("Step 4: HWID Limit set to 'Disabled (0)'.")
+            return await fetch_and_show_squads(update, context)
+        
+        elif action == 'hwid_set_value':
+            logger.info("Step 4: Awaiting HWID Limit value.")
+            await query.message.edit_text(t('ask_for_hwid_value', context))
+            return AWAITING_HWID_VALUE
+    except Exception as e:
+        logger.error(f"Error in hwid_option_handler: {e}")
+        return ConversationHandler.END
 
 async def get_hwid_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         limit = int(update.message.text)
         if limit <= 0: raise ValueError
         context.user_data['new_user_data']['hwidDeviceLimit'] = limit
+        logger.info(f"Step 4: Received HWID Limit value '{limit}'.")
         await update.message.delete()
         return await fetch_and_show_squads(update, context, message_id=context.user_data.get('prompt_message_id'))
-
     except (ValueError, TypeError):
         msg = await update.message.reply_text(t('invalid_number', context))
         context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
         return AWAITING_HWID_VALUE
+    except Exception as e:
+        logger.error(f"Error in get_hwid_value: {e}")
+        return ConversationHandler.END
 
 async def fetch_and_show_squads(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id: int = None) -> int:
-    squads_data, error = api_request('GET', '/api/internal-squads')
-    
-    query = update.callback_query
-    chat_id = update.effective_chat.id
-    
-    if message_id is None and query:
-        message_id = query.message.message_id
+    try:
+        logger.info("Step 5: Fetching squads list.")
+        squads_data, error = api_request('GET', '/api/internal-squads')
+        
+        query = update.callback_query
+        chat_id = update.effective_chat.id
+        
+        if message_id is None and query:
+            message_id = query.message.message_id
 
-    if error or not squads_data or 'response' not in squads_data or 'internalSquads' not in squads_data['response']:
+        if error or not squads_data or 'response' not in squads_data or 'internalSquads' not in squads_data['response']:
+            logger.error(f"Failed to fetch squads: {error}")
+            await context.bot.edit_message_text(
+                chat_id=chat_id, message_id=message_id,
+                text=t('fetching_squads_error', context)
+            )
+            return await start(update, context)
+        
+        context.user_data['available_squads'] = squads_data['response']['internalSquads']
+        context.user_data['selected_squads'] = set() 
+        logger.info("Successfully fetched squads. Displaying selection menu.")
+        keyboard = build_squad_keyboard(context)
         await context.bot.edit_message_text(
-            chat_id=chat_id, message_id=message_id,
-            text=t('fetching_squads_error', context)
+            chat_id=chat_id,
+            message_id=message_id,
+            text=t('select_squads_prompt', context),
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        return await start(update, context)
-    
-    context.user_data['available_squads'] = squads_data['response']['internalSquads']
-    context.user_data['selected_squads'] = set() 
-
-    keyboard = build_squad_keyboard(context)
-    await context.bot.edit_message_text(
-        chat_id=chat_id,
-        message_id=message_id,
-        text=t('select_squads_prompt', context),
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    return SELECTING_SQUADS
+        return SELECTING_SQUADS
+    except Exception as e:
+        logger.error(f"Error in fetch_and_show_squads: {e}")
+        return ConversationHandler.END
 
 def build_squad_keyboard(context: ContextTypes.DEFAULT_TYPE) -> list:
     keyboard = []
@@ -351,85 +378,93 @@ def build_squad_keyboard(context: ContextTypes.DEFAULT_TYPE) -> list:
     return keyboard
 
 async def squad_selection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    
-    action = query.data
-    
-    if action == 'create_user_final':
-        return await create_user(update, context)
-        
-    squad_uuid = action.split('_', 1)[1]
-    selected_squads = context.user_data.get('selected_squads', set())
-    
-    if squad_uuid in selected_squads:
-        selected_squads.remove(squad_uuid)
-    else:
-        selected_squads.add(squad_uuid)
-        
-    context.user_data['selected_squads'] = selected_squads
-    
-    keyboard = build_squad_keyboard(context)
     try:
-        await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
-    except BadRequest: pass
-    return SELECTING_SQUADS
-    
-async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    new_user_info = context.user_data['new_user_data']
-    selected_squad_uuids = list(context.user_data.get('selected_squads', []))
-    
-    username = new_user_info.get('username')
-    await query.message.edit_text(
-        t('creating_user', context, username=username),
-        parse_mode=ParseMode.HTML
-    )
-    
-    traffic_limit = new_user_info.get('trafficLimitBytes')
-    hwid_limit = new_user_info.get('hwidDeviceLimit')
+        query = update.callback_query
+        await query.answer()
+        
+        action = query.data
+        
+        if action == 'create_user_final':
+            logger.info("Squad selection finished. Proceeding to create user.")
+            return await create_user(update, context)
+            
+        squad_uuid = action.split('_', 1)[1]
+        selected_squads = context.user_data.get('selected_squads', set())
+        
+        if squad_uuid in selected_squads:
+            selected_squads.remove(squad_uuid)
+        else:
+            selected_squads.add(squad_uuid)
+            
+        context.user_data['selected_squads'] = selected_squads
+        
+        keyboard = build_squad_keyboard(context)
+        try:
+            await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+        except BadRequest: pass
+        return SELECTING_SQUADS
+    except Exception as e:
+        logger.error(f"Error in squad_selection_handler: {e}")
+        return ConversationHandler.END
 
-    payload = {
-        "username": username,
-        "status": "ACTIVE",
-        "trafficLimitBytes": traffic_limit if traffic_limit > 0 else 0, # Send 0 if it's 0
-        "trafficLimitStrategy": "NO_RESET",
-        "expireAt": new_user_info.get('expireAt'),
-        "hwidDeviceLimit": hwid_limit,
-        "activeInternalSquads": [{"uuid": uuid} for uuid in selected_squad_uuids],
-        "description": "",
-        "tag": "",
-        "telegramId": "",
-        "email": ""
-    }
-    
-    # === DEBUGGING LOG STARTS HERE ===
-    # This will print the exact payload to your bot's logs.
-    logger.info(f"PAYLOAD SENT TO API: {json.dumps(payload, indent=2)}")
-    # === DEBUGGING LOG ENDS HERE ===
-    
-    _, error = api_request('POST', '/api/users', payload=payload)
-    
-    if error:
-        keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        query = update.callback_query
+        new_user_info = context.user_data['new_user_data']
+        selected_squad_uuids = list(context.user_data.get('selected_squads', []))
+        
+        username = new_user_info.get('username')
         await query.message.edit_text(
-            t('error_creating_user', context, error=html.escape(error)),
-            parse_mode=ParseMode.HTML,
-            reply_markup=reply_markup
-        )
-        return MAIN_MENU
-    else:
-        await query.message.edit_text(
-            t('user_created_success', context, username=html.escape(username)),
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])
+            t('creating_user', context, username=username),
+            parse_mode=ParseMode.HTML
         )
         
-    context.user_data.clear()
-    return MAIN_MENU
+        traffic_limit = new_user_info.get('trafficLimitBytes')
+        hwid_limit = new_user_info.get('hwidDeviceLimit')
 
-# END of Add User Functions
+        payload = {
+            "username": username,
+            "status": "ACTIVE",
+            "trafficLimitBytes": traffic_limit,
+            "trafficLimitStrategy": "NO_RESET",
+            "expireAt": new_user_info.get('expireAt'),
+            "hwidDeviceLimit": hwid_limit,
+            "activeInternalSquads": [{"uuid": uuid} for uuid in selected_squad_uuids],
+            "description": "",
+            "tag": "",
+            "telegramId": "",
+            "email": ""
+        }
+        
+        logger.info(f"PAYLOAD SENT TO API: {json.dumps(payload, indent=2)}")
+        
+        _, error = api_request('POST', '/api/users', payload=payload)
+        
+        if error:
+            logger.error(f"API returned an error on user creation: {error}")
+            keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.message.edit_text(
+                t('error_creating_user', context, error=html.escape(error)),
+                parse_mode=ParseMode.HTML,
+                reply_markup=reply_markup
+            )
+            return MAIN_MENU
+        else:
+            logger.info(f"User '{username}' created successfully.")
+            await query.message.edit_text(
+                t('user_created_success', context, username=html.escape(username)),
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])
+            )
+            
+        context.user_data.clear()
+        return MAIN_MENU
+    except Exception as e:
+        logger.error(f"FATAL error in create_user function: {e}")
+        return ConversationHandler.END
+
+# ... (بقیه توابع بدون تغییر باقی می‌مانند) ...
 
 async def set_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer()
