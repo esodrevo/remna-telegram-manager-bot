@@ -212,13 +212,17 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             if users_list:
                 try:
                     # 3. کاربران را بر اساس تاریخ ساخت (createdAt) مرتب می‌کنیم
+                    # این بخش اصلاح شده تا تاریخ‌ها را به درستی مدیریت کند
                     sorted_users = sorted(
-                        users_list,
-                        key=lambda u: parse_iso_date(u.get('createdAt')) or datetime.min.replace(tzinfo=timezone.utc),
+                        (user for user in users_list if user.get('createdAt')), # Only consider users with a creation date
+                        key=lambda u: datetime.fromisoformat(u['createdAt'].replace('Z', '+00:00')),
                         reverse=True
                     )
-                    # 4. نام کاربری اولین نفر در لیست مرتب‌شده، آخرین کاربر است
-                    last_username = sorted_users[0].get('username', "N/A")
+                    
+                    if sorted_users:
+                        # 4. نام کاربری اولین نفر در لیست مرتب‌شده، آخرین کاربر است
+                        last_username = sorted_users[0].get('username', "N/A")
+
                 except Exception as e:
                     logger.error(f"Error sorting users: {e}")
 
