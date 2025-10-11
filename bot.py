@@ -1,4 +1,4 @@
-# bot.py
+# bot.py (نسخه عیب‌یابی)
 
 import logging, requests, json, subprocess, html, io
 from urllib.parse import urlparse
@@ -259,7 +259,7 @@ async def get_data_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         days = int(update.message.text)
-        if days < 0: raise ValueError # Allow 0 for same-day expiry if needed, but not negative
+        if days < 0: raise ValueError
         expire_date = datetime.now(timezone.utc) + timedelta(days=days)
         context.user_data['new_user_data']['expireAt'] = expire_date.isoformat().replace('+00:00', 'Z')
         
@@ -389,14 +389,10 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     traffic_limit = new_user_info.get('trafficLimitBytes')
     hwid_limit = new_user_info.get('hwidDeviceLimit')
 
-    # === PAYLOAD FIX V3 STARTS HERE ===
-    # This version sends all optional fields with default empty values
-    # to perfectly match the strict API documentation.
-    # It also sends 0 for unlimited/disabled values instead of null.
     payload = {
         "username": username,
         "status": "ACTIVE",
-        "trafficLimitBytes": traffic_limit,
+        "trafficLimitBytes": traffic_limit if traffic_limit > 0 else 0, # Send 0 if it's 0
         "trafficLimitStrategy": "NO_RESET",
         "expireAt": new_user_info.get('expireAt'),
         "hwidDeviceLimit": hwid_limit,
@@ -406,14 +402,15 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         "telegramId": "",
         "email": ""
     }
-    # === PAYLOAD FIX V3 ENDS HERE ===
+    
+    # === DEBUGGING LOG STARTS HERE ===
+    # This will print the exact payload to your bot's logs.
+    logger.info(f"PAYLOAD SENT TO API: {json.dumps(payload, indent=2)}")
+    # === DEBUGGING LOG ENDS HERE ===
     
     _, error = api_request('POST', '/api/users', payload=payload)
     
     if error:
-        # === BUTTON FIX STARTS HERE ===
-        # Add a "Back to menu" button directly to the error message
-        # and correctly transition the conversation state back to MAIN_MENU.
         keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.edit_text(
@@ -422,7 +419,6 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             reply_markup=reply_markup
         )
         return MAIN_MENU
-        # === BUTTON FIX ENDS HERE ===
     else:
         await query.message.edit_text(
             t('user_created_success', context, username=html.escape(username)),
