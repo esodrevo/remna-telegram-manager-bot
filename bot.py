@@ -301,14 +301,14 @@ async def process_bulk_change_value(update: Update, context: ContextTypes.DEFAUL
         pass
 
     text = update.message.text
-    match = re.match(r'^\s*([+-])\s*(\d+)\s*$', text)
+    match = re.match(r'^\s*([+-])\s*(\d+(\.\d+)?)\s*$', text) # Allows for decimal values in GB
     if not match:
         msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('invalid_bulk_input', context))
         context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
         return AWAITING_BULK_VALUE
         
     sign = match.group(1)
-    value = int(match.group(2))
+    value = float(match.group(2))
     change_value = value if sign == '+' else -value
     context.user_data['bulk_change_value'] = change_value
 
@@ -324,9 +324,9 @@ async def process_bulk_change_value(update: Update, context: ContextTypes.DEFAUL
     
     edit_type = context.user_data['bulk_edit_type']
     change_type_text = t('change_type_volume', context) if edit_type == 'volume' else t('change_type_date', context)
-    change_value_text = f"+{change_value} GB" if edit_type == 'volume' else f"+{change_value} {t('days_unit', context)}"
+    change_value_text = f"+{change_value} GB" if edit_type == 'volume' else f"+{int(change_value)} {t('days_unit', context)}"
     if change_value < 0:
-        change_value_text = f"{change_value} GB" if edit_type == 'volume' else f"{change_value} {t('days_unit', context)}"
+        change_value_text = f"{change_value} GB" if edit_type == 'volume' else f"{int(change_value)} {t('days_unit', context)}"
 
     confirmation_text = t('confirm_bulk_update_prompt', context, 
                           change_type=change_type_text, 
@@ -348,74 +348,94 @@ async def confirm_bulk_action_handler(update: Update, context: ContextTypes.DEFA
     
     if query.data == 'cancel_bulk_action':
         await query.message.edit_text(t('bulk_update_cancelled', context))
-        return await start(update, context)
+        # Use query in start to avoid potential errors
+        return await start(query, context)
 
     user_count = len(context.user_data.get('bulk_users_list', []))
     await query.message.edit_text(t('bulk_update_started', context, user_count=user_count), parse_mode=ParseMode.HTML)
     
+    # ***MODIFICATION START***: Pass LANGUAGES dictionary directly to the job
     job_context = {
         'chat_id': update.effective_chat.id,
         'lang': get_lang(context),
+        'languages_dict': LANGUAGES, # Pass the whole dictionary
         'bulk_users_list': context.user_data['bulk_users_list'],
         'bulk_edit_type': context.user_data['bulk_edit_type'],
         'bulk_change_value': context.user_data['bulk_change_value']
     }
+    # ***MODIFICATION END***
+    
     context.job_queue.run_once(bulk_update_job, 1, context=job_context, name=f"bulk_update_{update.effective_chat.id}")
     
+    # End conversation here, as the job will handle the final message
     return ConversationHandler.END
 
 async def bulk_update_job(context: ContextTypes.DEFAULT_TYPE):
-    job_data = context.job
-    chat_id = job_data.context['chat_id']
-    # A trick to use the 't' function inside a job
-    fake_context = type('obj', (object,), {'user_data': {'lang': job_data.context['lang']}})()
+    job_data = context.job.context
+    chat_id = job_data['chat_id']
     
-    users = job_data.context['bulk_users_list']
-    edit_type = job_data.context['bulk_edit_type']
-    change_value = job_data.context['bulk_change_value']
+    # ***MODIFICATION START***: Robust translation method inside the job
+    lang = job_data['lang']
+    languages_dict = job_data['languages_dict']
     
-    success_count = 0
-    failed_count = 0
-    
-    for user in users:
-        user_uuid = user.get('uuid')
-        if not user_uuid:
-            failed_count += 1
-            continue
-            
-        payload = {}
-        if edit_type == 'volume':
-            current_limit = user.get('trafficLimitBytes')
-            if current_limit is None or current_limit == 0: # Skip unlimited users
-                continue
-            
-            bytes_to_change = change_value * (1024**3)
-            new_limit = current_limit + bytes_to_change
-            payload = {'trafficLimitBytes': max(0, new_limit)} # Ensure it's not negative
+    def job_t(key, **kwargs):
+        # A simple, self-contained translation function for the job
+        return languages_dict.get(lang, languages_dict['en']).get(key, key).format(**kwargs)
+    # ***MODIFICATION END***
+
+    try:
+        users = job_data['bulk_users_list']
+        edit_type = job_data['bulk_edit_type']
+        change_value = job_data['bulk_change_value']
         
-        elif edit_type == 'date':
-            current_expire_str = user.get('expireAt')
-            if not current_expire_str: # Skip users with no expiration
-                continue
-
-            current_expire_dt = parse_iso_date(current_expire_str)
-            if not current_expire_dt:
+        success_count = 0
+        failed_count = 0
+        
+        for user in users:
+            user_uuid = user.get('uuid')
+            if not user_uuid:
                 failed_count += 1
                 continue
+                
+            payload = {}
+            if edit_type == 'volume':
+                current_limit = user.get('trafficLimitBytes')
+                if current_limit is None or current_limit == 0: # Skip unlimited users
+                    continue
+                
+                bytes_to_change = int(change_value * (1024**3))
+                new_limit = current_limit + bytes_to_change
+                payload = {'trafficLimitBytes': max(0, new_limit)} # Ensure it's not negative
             
-            new_expire_dt = current_expire_dt + timedelta(days=change_value)
-            payload = {'expireAt': new_expire_dt.isoformat().replace('+00:00', 'Z')}
-            
-        if payload:
-            _, error = api_request('PATCH', f'/api/users/{user_uuid}', payload=payload)
-            if error:
-                failed_count += 1
-                logger.warning(f"Bulk update failed for user {user.get('username')}: {error}")
-            else:
-                success_count += 1
+            elif edit_type == 'date':
+                current_expire_str = user.get('expireAt')
+                if not current_expire_str: # Skip users with no expiration
+                    continue
 
-    final_message = t('bulk_update_complete', fake_context, success_count=success_count, failed_count=failed_count)
-    await context.bot.send_message(chat_id=chat_id, text=final_message)
+                current_expire_dt = parse_iso_date(current_expire_str)
+                if not current_expire_dt:
+                    failed_count += 1
+                    continue
+                
+                new_expire_dt = current_expire_dt + timedelta(days=int(change_value))
+                payload = {'expireAt': new_expire_dt.isoformat().replace('+00:00', 'Z')}
+                
+            if payload:
+                _, error = api_request('PATCH', f'/api/users/{user_uuid}', payload=payload)
+                if error:
+                    failed_count += 1
+                    logger.warning(f"Bulk update failed for user {user.get('username')}: {error}")
+                else:
+                    success_count += 1
+
+        final_message = job_t('bulk_update_complete', success_count=success_count, failed_count=failed_count)
+        await context.bot.send_message(chat_id=chat_id, text=final_message)
+
+    except Exception as e:
+        logger.error(f"FATAL ERROR in bulk_update_job: {e}", exc_info=True)
+        # Send a generic error message to the user so they are not left waiting
+        error_message = "❌ An unexpected error occurred during the bulk update process. Please check the logs."
+        await context.bot.send_message(chat_id=chat_id, text=error_message)
 
 # --- End of Bulk Edit Feature ---
 
