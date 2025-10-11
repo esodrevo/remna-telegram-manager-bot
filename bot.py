@@ -672,6 +672,34 @@ async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.message.edit_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
     return MAIN_MENU
 
+# ======================================================================
+# ========= vvvvvvvvvvvv این تابع دیباگ را اضافه کنید vvvvvvvvvvvv =========
+# ======================================================================
+async def debug_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """A special command to debug the /api/users endpoint."""
+    if not is_admin(update):
+        return
+
+    await update.message.reply_text("⏳ در حال فراخوانی `/api/users` و نمایش نتیجه خام...")
+    
+    data, error = api_request('GET', '/api/users')
+    
+    debug_message = "--- 💻 نتیجه دیباگ API ---\n\n"
+    
+    if error:
+        debug_message += f"❌ خطا در درخواست API:\n<pre>{html.escape(str(error))}</pre>"
+    elif not data:
+        debug_message += "⚠️ پاسخ API موفق بود اما هیچ داده‌ای برنگرداند (پاسخ خالی)."
+    else:
+        # پاسخ کامل را به صورت متن خوانا و فرمت‌شده درمی‌آوریم
+        pretty_json = json.dumps(data, indent=2, ensure_ascii=False)
+        debug_message += f"✅ پاسخ API موفق بود:\n<pre>{html.escape(pretty_json)}</pre>"
+        
+    await update.message.reply_text(debug_message, parse_mode=ParseMode.HTML)
+# ======================================================================
+# ========= ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ =========
+# ======================================================================
+
 def main() -> None:
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     
@@ -707,7 +735,8 @@ def main() -> None:
         ], 
         allow_reentry=True
     )
-    
+
+    application.add_handler(CommandHandler('debugapi', debug_api))
     application.add_handler(conv_handler)
     logger.info("Bot is running...")
     application.run_polling()
