@@ -54,7 +54,7 @@ def is_admin(update: Update) -> bool:
     return update.effective_user.id == config.ADMIN_USER_ID
 
 def format_bytes(byte_count):
-    if byte_count is None or byte_count <= 0: return "نامحدود" if get_lang_from_file() == 'fa' else "Unlimited"
+    if byte_count is None or byte_count == 0: return "نامحدود" if get_lang_from_file() == 'fa' else "Unlimited"
     power=1024; n=0; labels={0:' B',1:' KB',2:' MB',3:' GB'}
     while byte_count >= power and n < 3: byte_count /= power; n += 1
     return f"{byte_count:.2f}{labels[n]}"
@@ -288,7 +288,6 @@ async def hwid_option_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if action == 'hwid_disable':
         context.user_data['new_user_data']['hwidDeviceLimit'] = 0
-        # BUG FIX: Edit the message to show a loading state before fetching squads
         await query.message.edit_text(t('fetching_squads_prompt', context))
         return await fetch_and_show_squads(update, context, message_id=query.message.message_id)
     
@@ -302,7 +301,6 @@ async def get_hwid_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if limit <= 0: raise ValueError
         context.user_data['new_user_data']['hwidDeviceLimit'] = limit
         await update.message.delete()
-        # BUG FIX: Re-use the existing message to show the loading state
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
             message_id=context.user_data.get('prompt_message_id'),
@@ -398,6 +396,7 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     selected_squad_uuids = list(context.user_data.get('selected_squads', []))
     
     username = new_user_info.get('username')
+    
     await query.message.edit_text(
         t('creating_user', context, username=username),
         parse_mode=ParseMode.HTML
@@ -425,28 +424,33 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     
     data, error = api_request('POST', '/api/users', payload=payload)
     
+    # BUG FIX: Delete the "Creating user..." message before sending the result
+    try:
+        await query.message.delete()
+    except BadRequest: pass
+
     keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    chat_id = query.message.chat_id
 
     if error:
-        await query.message.edit_text(
-            t('error_creating_user', context, error=html.escape(error)),
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=t('error_creating_user', context, error=html.escape(error)),
             parse_mode=ParseMode.HTML,
             reply_markup=reply_markup
         )
     else:
-        # NEW FEATURE: Build detailed success message
         success_message = build_user_created_message(data.get('response', {}), context)
-        await query.message.edit_text(
-            success_message,
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=success_message,
             parse_mode=ParseMode.HTML,
             reply_markup=reply_markup
         )
         
     context.user_data.clear()
-    # BUG FIX: By returning MAIN_MENU, we ensure the 'back_to_main' handler is active.
     return MAIN_MENU
-
 # ... (rest of the file remains unchanged) ...
 async def set_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer()
