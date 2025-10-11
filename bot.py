@@ -390,9 +390,6 @@ def build_user_created_message(response_data: dict, context: ContextTypes.DEFAUL
              expire_date=expire_date, 
              sub_link=sub_link)
 
-# ======================================================================
-# ========= vvvvvvvvvvv THE MODIFIED FUNCTION IS HERE vvvvvvvvvvv ========
-# ======================================================================
 async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     new_user_info = context.user_data.get('new_user_data', {})
@@ -400,7 +397,6 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     
     username = new_user_info.get('username')
     
-    # Show "Creating user..." message
     await query.message.edit_text(
         t('creating_user', context, username=username),
         parse_mode=ParseMode.HTML
@@ -428,17 +424,14 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     
     data, error = api_request('POST', '/api/users', payload=payload)
     
-    # Define the "Back to Main Menu" button
     keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Prepare the message text based on the result
     if error:
         message_text = t('error_creating_user', context, error=html.escape(error))
     else:
         message_text = build_user_created_message(data.get('response', {}), context)
 
-    # Instead of deleting and sending, we edit the same message
     await query.message.edit_text(
         text=message_text,
         parse_mode=ParseMode.HTML,
@@ -447,9 +440,6 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         
     context.user_data.clear()
     return MAIN_MENU
-# ======================================================================
-# ========= ^^^^^^^^^^^ THE MODIFIED FUNCTION IS HERE ^^^^^^^^^^^ ========
-# ======================================================================
 
 async def set_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer()
@@ -675,6 +665,10 @@ async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 def main() -> None:
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
+    
+    # ======================================================================
+    # ========= vvvvvvvvvvv THE FINAL CHANGE IS HERE vvvvvvvvvvv =========
+    # ======================================================================
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -698,8 +692,14 @@ def main() -> None:
             AWAITING_HWID_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_hwid_value)],
             SELECTING_SQUADS: [CallbackQueryHandler(squad_selection_handler, pattern='^squad_|^create_user_final$')]
         },
-        fallbacks=[CommandHandler('start', start)], allow_reentry=True
+        # Adding the back_to_main handler to fallbacks makes it work globally
+        fallbacks=[CommandHandler('start', start), CallbackQueryHandler(start, pattern='^back_to_main$')], 
+        allow_reentry=True
     )
+    # ======================================================================
+    # ========= ^^^^^^^^^^^ THE FINAL CHANGE IS HERE ^^^^^^^^^^^ =========
+    # ======================================================================
+    
     application.add_handler(conv_handler)
     logger.info("Bot is running...")
     application.run_polling()
