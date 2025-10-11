@@ -676,26 +676,40 @@ async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 # ========= vvvvvvvvvvvv این تابع دیباگ را اضافه کنید vvvvvvvvvvvv =========
 # ======================================================================
 async def debug_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """A special command to debug the /api/users endpoint."""
+    """A safer, more robust version of the debug command."""
     if not is_admin(update):
         return
 
-    await update.message.reply_text("⏳ در حال فراخوانی `/api/users` و نمایش نتیجه خام...")
+    await update.message.reply_text("⏳ در حال فراخوانی `/api/users` (نسخه امن)...")
     
-    data, error = api_request('GET', '/api/users')
-    
-    debug_message = "--- 💻 نتیجه دیباگ API ---\n\n"
-    
-    if error:
-        debug_message += f"❌ خطا در درخواست API:\n<pre>{html.escape(str(error))}</pre>"
-    elif not data:
-        debug_message += "⚠️ پاسخ API موفق بود اما هیچ داده‌ای برنگرداند (پاسخ خالی)."
-    else:
-        # پاسخ کامل را به صورت متن خوانا و فرمت‌شده درمی‌آوریم
-        pretty_json = json.dumps(data, indent=2, ensure_ascii=False)
-        debug_message += f"✅ پاسخ API موفق بود:\n<pre>{html.escape(pretty_json)}</pre>"
+    try:
+        data, error = api_request('GET', '/api/users')
         
-    await update.message.reply_text(debug_message, parse_mode=ParseMode.HTML)
+        debug_message = "--- 💻 نتیجه دیباگ API ---\n\n"
+        
+        if error:
+            debug_message += f"❌ خطا در درخواست API:\n<pre>{html.escape(str(error))}</pre>"
+        elif not data:
+            debug_message += "⚠️ پاسخ API موفق بود اما هیچ داده‌ای برنگرداند (پاسخ خالی)."
+        else:
+            # پاسخ کامل را به صورت متن خوانا و فرمت‌شده درمی‌آوریم
+            pretty_json = json.dumps(data, indent=2, ensure_ascii=False)
+            
+            # بررسی طول پیام برای جلوگیری از خطای تلگرام
+            max_len = 3800 # کمی کمتر از 4096 برای اطمینان
+            if len(pretty_json) > max_len:
+                truncated_json = pretty_json[:max_len] + "\n\n... (پاسخ برای نمایش کوتاه شده است)"
+                debug_message += f"✅ پاسخ API موفق بود (کوتاه شده):\n<pre>{html.escape(truncated_json)}</pre>"
+            else:
+                debug_message += f"✅ پاسخ API موفق بود:\n<pre>{html.escape(pretty_json)}</pre>"
+            
+        await update.message.reply_text(debug_message, parse_mode=ParseMode.HTML)
+
+    except Exception as e:
+        # هر خطای پیش‌بینی نشده‌ای را می‌گیریم و گزارش می‌دهیم
+        error_text = f"🚨 یک خطای غیرمنتظره در تابع دیباگ رخ داد:\n\n<pre>{html.escape(str(e))}</pre>"
+        logger.error(f"Unhandled exception in debug_api: {e}", exc_info=True)
+        await update.message.reply_text(error_text, parse_mode=ParseMode.HTML)
 # ======================================================================
 # ========= ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ =========
 # ======================================================================
