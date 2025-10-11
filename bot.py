@@ -193,71 +193,33 @@ async def show_node_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.message.edit_text(text=message_text, reply_markup=reply_markup)
     return NODE_LIST
 
-# ======================================================================
-# ========= vvvvvvvvvvvv تابع کمکی جدید برای مرتب‌سازی امن vvvvvvvvvvvv
-# ======================================================================
-def get_creation_date(user: dict):
-    """
-    Safely extracts and parses the creation date from a user dictionary.
-    Returns a very old date if the date is missing or invalid, ensuring the sort doesn't crash.
-    """
-    created_at_str = user.get('createdAt')
-    if not created_at_str or not isinstance(created_at_str, str):
-        return datetime.min.replace(tzinfo=timezone.utc)
-    try:
-        return datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
-    except ValueError:
-        return datetime.min.replace(tzinfo=timezone.utc)
-# ======================================================================
-# ======================================================================
+# تابع کمکی قبلی حذف شد چون دیگر به آن نیازی نیست
 
 async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer(); action = query.data
     
     if action == 'go_add_user':
-        await query.message.edit_text(text="⏳ در حال دریافت آخرین کاربر (مرحله دیباگ)...")
-        
-        logger.info("--- STARTING DEBUG for 'go_add_user' ---")
+        await query.message.edit_text(text="⏳ در حال دریافت آخرین کاربر...")
         
         last_username = "N/A"
         users_data, error = api_request('GET', '/api/users')
         
-        if error:
-            logger.error(f"API request failed with error: {error}")
-        elif not users_data:
-            logger.warning("API response was empty.")
-        else:
-            # لاگ کردن کل پاسخ دریافتی از API
-            logger.info(f"Full API Response received: {json.dumps(users_data, indent=2)}")
+        if not error and users_data and 'response' in users_data:
+            users_list = users_data.get('response')
             
-            users_list = users_data.get('response') # Using .get() for safety
-            
-            if not users_list:
-                logger.warning("The 'response' key in the API data is missing or empty.")
-            elif not isinstance(users_list, list):
-                 logger.warning(f"The 'response' key is not a list. It is of type: {type(users_list)}")
-            else:
-                logger.info(f"Successfully found {len(users_list)} users in the list.")
-                
-                # لاگ کردن ساختار اولین کاربر در لیست برای بررسی فیلدها
-                if users_list:
-                    logger.info(f"Structure of the first user object: {json.dumps(users_list[0], indent=2)}")
-
+            # حالا که می‌دانیم لیست شامل رشته است، به سادگی آخرین مورد را برمی‌داریم
+            if isinstance(users_list, list) and users_list:
                 try:
-                    # استفاده از تابع کمکی که قبلا نوشتیم
-                    sorted_users = sorted(users_list, key=get_creation_date, reverse=True)
-                    
-                    if sorted_users:
-                        last_username = sorted_users[0].get('username', "N/A")
-                        logger.info(f"Successfully sorted users. Latest user found: {last_username}")
-                    else:
-                        logger.warning("User list was not empty, but sorting resulted in an empty list.")
-
+                    # آخرین آیتم در لیست را به عنوان آخرین کاربر در نظر می‌گیریم
+                    last_item = users_list[-1]
+                    if isinstance(last_item, str):
+                        last_username = last_item
+                    # اگر آیتم آخر دیکشنری بود (برای سازگاری با نسخه‌های دیگر پنل)
+                    elif isinstance(last_item, dict) and 'username' in last_item:
+                        last_username = last_item['username']
+                        
                 except Exception as e:
-                    # لاگ کردن هر خطایی که در زمان مرتب‌سازی رخ دهد
-                    logger.error(f"CRITICAL ERROR during sorting process: {e}", exc_info=True)
-
-        logger.info("--- ENDING DEBUG for 'go_add_user' ---")
+                    logger.error(f"Error getting last user from list: {e}")
 
         context.user_data['new_user_data'] = {}
         prompt_text = t('ask_for_new_username_with_suggestion', context, last_user=last_username)
