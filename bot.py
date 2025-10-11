@@ -354,9 +354,9 @@ async def confirm_bulk_action_handler(update: Update, context: ContextTypes.DEFA
     await query.message.edit_text(t('bulk_update_started', context, user_count=user_count), parse_mode=ParseMode.HTML)
     
     background_task_data = {
-        'bot_token': config.TELEGRAM_BOT_TOKEN,
+        'bot': context.bot, # Pass the bot object for cleaner code
         'chat_id': update.effective_chat.id,
-        'message_id_to_delete': query.message.message_id, # Pass message ID to delete
+        'message_id_to_delete': query.message.message_id,
         'lang': get_lang(context),
         'languages_dict': LANGUAGES,
         'bulk_users_list': context.user_data['bulk_users_list'],
@@ -370,8 +370,7 @@ async def confirm_bulk_action_handler(update: Update, context: ContextTypes.DEFA
     return ConversationHandler.END
 
 async def run_bulk_update_background(task_data: dict):
-    from telegram import Bot
-    bot = Bot(token=task_data['bot_token'])
+    bot = task_data['bot']
     chat_id = task_data['chat_id']
     lang = task_data['lang']
     languages_dict = task_data['languages_dict']
@@ -430,7 +429,6 @@ async def run_bulk_update_background(task_data: dict):
             if len(payload) > 1:
                 logger.info(f"Updating user {username} ({user_uuid}) with payload: {payload}")
                 
-                # *** FINAL FIX: Use correct endpoint AND run in a non-blocking way ***
                 _, error = await asyncio.to_thread(
                     api_request, 'PATCH', '/api/users', payload=payload
                 )
@@ -444,7 +442,6 @@ async def run_bulk_update_background(task_data: dict):
 
         logger.info(f"BACKGROUND TASK finished. Success: {success_count}, Failed: {failed_count}, Skipped: {skipped_count}")
         
-        # Prepare the final message with the "Back to Main Menu" button
         final_message = job_t('bulk_update_complete_detailed', 
                               success_count=success_count, 
                               failed_count=failed_count, 
@@ -453,7 +450,13 @@ async def run_bulk_update_background(task_data: dict):
         keyboard = [[InlineKeyboardButton(job_t('back_to_main_menu_btn'), callback_data='back_to_main')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await bot.send_message(chat_id=chat_id, text=final_message, reply_markup=reply_markup)
+        # *** THE FIX IS HERE: Add parse_mode=ParseMode.HTML ***
+        await bot.send_message(
+            chat_id=chat_id, 
+            text=final_message, 
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
+        )
 
     except Exception as e:
         logger.error(f"FATAL ERROR in background task for chat_id {chat_id}: {e}", exc_info=True)
@@ -461,7 +464,7 @@ async def run_bulk_update_background(task_data: dict):
         await bot.send_message(chat_id=chat_id, text=error_message, parse_mode=ParseMode.MARKDOWN)
     
     finally:
-        # Always try to delete the "in progress" message, even if there was an error
+        # *** THE FIX IS HERE: Always delete the "in progress" message ***
         try:
             await bot.delete_message(chat_id=chat_id, message_id=task_data['message_id_to_delete'])
         except Exception as e:
@@ -849,7 +852,6 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         context.job_queue.run_once(lambda j: j.context.delete(), 5, context=msg)
         return AWAITING_LIMIT
 
-    # *** FINAL FIX: Use correct endpoint and payload structure for single edit ***
     _, error = await asyncio.to_thread(api_request, 'PATCH', '/api/users', payload=payload)
     
     if error: 
