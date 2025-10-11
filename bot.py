@@ -23,6 +23,17 @@ try:
 except FileNotFoundError: logger.critical("locales.json not found!"); exit()
 except json.JSONDecodeError: logger.critical("locales.json is not a valid JSON file."); exit()
 
+# Add new translation keys for the final report to locales.json if they don't exist
+# "bulk_update_complete_detailed": "✅ عملیات گروهی تمام شد.\n\nتعداد کاربران موفق: {success_count}\nتعداد کاربران ناموفق: {failed_count}\nتعداد کاربران نادیده گرفته شده: {skipped_count}",
+# "skipped_reason_unlimited": "(طرح نامحدود)"
+LANGUAGES['fa'].setdefault('bulk_update_complete_detailed', "✅ عملیات گروهی تمام شد.\n\n- کاربران موفق: {success_count}\n- کاربران ناموفق: {failed_count}\n- نادیده گرفته شده: {skipped_count} {skipped_reason_unlimited}")
+LANGUAGES['en'].setdefault('bulk_update_complete_detailed', "✅ Bulk update complete.\n\n- Successful: {success_count}\n- Failed: {failed_count}\n- Skipped: {skipped_count} {skipped_reason_unlimited}")
+LANGUAGES['ru'].setdefault('bulk_update_complete_detailed', "✅ Массовое обновление завершено.\n\n- Успешно: {success_count}\n- Ошибки: {failed_count}\n- Пропущено: {skipped_count} {skipped_reason_unlimited}")
+LANGUAGES['fa'].setdefault('skipped_reason_unlimited', "(کاربران نامحدود)")
+LANGUAGES['en'].setdefault('skipped_reason_unlimited', "(unlimited users)")
+LANGUAGES['ru'].setdefault('skipped_reason_unlimited', "(безлимитные пользователи)")
+
+
 COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("start", "نمایش منوی اصلی")], 'ru': [BotCommand("start", "Показать главное меню")]}
 
 # STATE CONSTANTS
@@ -112,18 +123,14 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
     data_limit = user_data.get('trafficLimitBytes')
     data_usage = user_data.get('usedTrafficBytes', 0)
 
-    # 1. Format the limit. The original function works correctly here (0 or None is "Unlimited").
     limit_formatted = format_bytes(data_limit)
-
-    # 2. Format the usage. If usage is 0, display "0.00 B" instead of "Unlimited".
     usage_formatted = "0.00 B"
-    if data_usage > 0:
+    if data_usage and data_usage > 0:
         usage_formatted = format_bytes(data_usage)
 
-    # 3. Format the remaining data.
-    remaining_formatted = t('unlimited', context) # Default for unlimited plans
-    if data_limit is not None and data_limit > 0: # Only calculate if there is a finite limit
-        remaining_bytes = data_limit - data_usage
+    remaining_formatted = t('unlimited', context)
+    if data_limit is not None and data_limit > 0:
+        remaining_bytes = data_limit - (data_usage or 0)
         remaining_formatted = format_bytes(remaining_bytes)
 
     expire_dt = parse_iso_date(user_data.get('expireAt'))
@@ -138,7 +145,6 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
     sub_last_update_dt = parse_iso_date(user_data.get('subLastOpenedAt'))
     last_update_relative = human_readable_timediff(sub_last_update_dt, context)
     
-    # Use the new formatted variables in the final message
     return (f"{t('user_info_title', context, username=safe_username)}\n\n"
             f"{t('status', context)} {status}\n\n"
             f"{t('total_limit', context)} {limit_formatted}\n"
@@ -301,7 +307,7 @@ async def process_bulk_change_value(update: Update, context: ContextTypes.DEFAUL
         pass
 
     text = update.message.text
-    match = re.match(r'^\s*([+-])\s*(\d+(\.\d+)?)\s*$', text) # Allows for decimal values in GB
+    match = re.match(r'^\s*([+-])\s*(\d+(\.\d+)?)\s*$', text)
     if not match:
         msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('invalid_bulk_input', context))
         context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
@@ -348,96 +354,106 @@ async def confirm_bulk_action_handler(update: Update, context: ContextTypes.DEFA
     
     if query.data == 'cancel_bulk_action':
         await query.message.edit_text(t('bulk_update_cancelled', context))
-        # Use query in start to avoid potential errors
         return await start(query, context)
 
     user_count = len(context.user_data.get('bulk_users_list', []))
     await query.message.edit_text(t('bulk_update_started', context, user_count=user_count), parse_mode=ParseMode.HTML)
     
-    # ***MODIFICATION START***: Pass LANGUAGES dictionary directly to the job
     job_context = {
         'chat_id': update.effective_chat.id,
         'lang': get_lang(context),
-        'languages_dict': LANGUAGES, # Pass the whole dictionary
+        'languages_dict': LANGUAGES,
         'bulk_users_list': context.user_data['bulk_users_list'],
         'bulk_edit_type': context.user_data['bulk_edit_type'],
         'bulk_change_value': context.user_data['bulk_change_value']
     }
-    # ***MODIFICATION END***
     
     context.job_queue.run_once(bulk_update_job, 1, context=job_context, name=f"bulk_update_{update.effective_chat.id}")
     
-    # End conversation here, as the job will handle the final message
     return ConversationHandler.END
 
 async def bulk_update_job(context: ContextTypes.DEFAULT_TYPE):
     job_data = context.job.context
     chat_id = job_data['chat_id']
     
-    # ***MODIFICATION START***: Robust translation method inside the job
     lang = job_data['lang']
     languages_dict = job_data['languages_dict']
     
     def job_t(key, **kwargs):
-        # A simple, self-contained translation function for the job
         return languages_dict.get(lang, languages_dict['en']).get(key, key).format(**kwargs)
-    # ***MODIFICATION END***
 
     try:
+        logger.info(f"Starting bulk update job for chat_id: {chat_id}")
         users = job_data['bulk_users_list']
         edit_type = job_data['bulk_edit_type']
         change_value = job_data['bulk_change_value']
         
         success_count = 0
         failed_count = 0
+        skipped_count = 0
         
         for user in users:
             user_uuid = user.get('uuid')
+            username = user.get('username', 'N/A')
+            
             if not user_uuid:
+                logger.warning(f"Skipping user with no UUID: {user}")
                 failed_count += 1
                 continue
-                
+            
             payload = {}
             if edit_type == 'volume':
                 current_limit = user.get('trafficLimitBytes')
-                if current_limit is None or current_limit == 0: # Skip unlimited users
+                if current_limit is None or current_limit == 0:
+                    logger.info(f"Skipping user {username} (unlimited traffic).")
+                    skipped_count += 1
                     continue
                 
                 bytes_to_change = int(change_value * (1024**3))
                 new_limit = current_limit + bytes_to_change
-                payload = {'trafficLimitBytes': max(0, new_limit)} # Ensure it's not negative
+                payload = {'trafficLimitBytes': max(0, new_limit)}
             
             elif edit_type == 'date':
                 current_expire_str = user.get('expireAt')
-                if not current_expire_str: # Skip users with no expiration
+                if not current_expire_str:
+                    logger.info(f"Skipping user {username} (no expiration date).")
+                    skipped_count += 1
                     continue
 
                 current_expire_dt = parse_iso_date(current_expire_str)
                 if not current_expire_dt:
+                    logger.warning(f"Could not parse expiration date for user {username}: {current_expire_str}")
                     failed_count += 1
                     continue
                 
                 new_expire_dt = current_expire_dt + timedelta(days=int(change_value))
                 payload = {'expireAt': new_expire_dt.isoformat().replace('+00:00', 'Z')}
-                
+            
             if payload:
+                logger.info(f"Updating user {username} ({user_uuid}) with payload: {payload}")
                 _, error = api_request('PATCH', f'/api/users/{user_uuid}', payload=payload)
                 if error:
                     failed_count += 1
-                    logger.warning(f"Bulk update failed for user {user.get('username')}: {error}")
+                    logger.error(f"Bulk update FAILED for user {username}: {error}")
                 else:
                     success_count += 1
+                    logger.info(f"Bulk update SUCCEEDED for user {username}.")
 
-        final_message = job_t('bulk_update_complete', success_count=success_count, failed_count=failed_count)
+        logger.info(f"Bulk update job finished. Success: {success_count}, Failed: {failed_count}, Skipped: {skipped_count}")
+        final_message = job_t('bulk_update_complete_detailed', 
+                              success_count=success_count, 
+                              failed_count=failed_count, 
+                              skipped_count=skipped_count,
+                              skipped_reason_unlimited=job_t('skipped_reason_unlimited'))
         await context.bot.send_message(chat_id=chat_id, text=final_message)
 
     except Exception as e:
-        logger.error(f"FATAL ERROR in bulk_update_job: {e}", exc_info=True)
-        # Send a generic error message to the user so they are not left waiting
-        error_message = "❌ An unexpected error occurred during the bulk update process. Please check the logs."
-        await context.bot.send_message(chat_id=chat_id, text=error_message)
+        logger.error(f"FATAL ERROR in bulk_update_job for chat_id {chat_id}: {e}", exc_info=True)
+        error_message = f"❌ An unexpected error occurred during the bulk update process. Please check the bot logs for details.\n\n`{e}`"
+        await context.bot.send_message(chat_id=chat_id, text=error_message, parse_mode=ParseMode.MARKDOWN)
 
 # --- End of Bulk Edit Feature ---
+
 
 async def get_new_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['new_user_data']['username'] = update.message.text
