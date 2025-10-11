@@ -23,13 +23,6 @@ try:
 except FileNotFoundError: logger.critical("locales.json not found!"); exit()
 except json.JSONDecodeError: logger.critical("locales.json is not a valid JSON file."); exit()
 
-LANGUAGES['fa'].setdefault('bulk_update_complete_detailed', "✅ عملیات گروهی تمام شد.\n\n- کاربران موفق: {success_count}\n- کاربران ناموفق: {failed_count}\n- نادیده گرفته شده: {skipped_count} {skipped_reason_unlimited}")
-LANGUAGES['en'].setdefault('bulk_update_complete_detailed', "✅ Bulk update complete.\n\n- Successful: {success_count}\n- Failed: {failed_count}\n- Skipped: {skipped_count} {skipped_reason_unlimited}")
-LANGUAGES['ru'].setdefault('bulk_update_complete_detailed', "✅ Массовое обновление завершено.\n\n- Успешно: {success_count}\n- Ошибки: {failed_count}\n- Пропущено: {skipped_count} {skipped_reason_unlimited}")
-LANGUAGES['fa'].setdefault('skipped_reason_unlimited', "(کاربران نامحدود)")
-LANGUAGES['en'].setdefault('skipped_reason_unlimited', "(unlimited users)")
-LANGUAGES['ru'].setdefault('skipped_reason_unlimited', "(безлимитные пользователи)")
-
 
 COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("start", "نمایش منوی اصلی")], 'ru': [BotCommand("start", "Показать главное меню")]}
 
@@ -363,6 +356,7 @@ async def confirm_bulk_action_handler(update: Update, context: ContextTypes.DEFA
     background_task_data = {
         'bot_token': config.TELEGRAM_BOT_TOKEN,
         'chat_id': update.effective_chat.id,
+        'message_id_to_delete': query.message.message_id, # Pass message ID to delete
         'lang': get_lang(context),
         'languages_dict': LANGUAGES,
         'bulk_users_list': context.user_data['bulk_users_list'],
@@ -404,9 +398,7 @@ async def run_bulk_update_background(task_data: dict):
                 failed_count += 1
                 continue
             
-            payload = {}
-            # ***THE FIX IS HERE: Add 'uuid' to the payload***
-            payload['uuid'] = user_uuid
+            payload = {'uuid': user_uuid}
             
             if edit_type == 'volume':
                 current_limit = user.get('trafficLimitBytes')
@@ -435,10 +427,10 @@ async def run_bulk_update_background(task_data: dict):
                 new_expire_dt = current_expire_dt + timedelta(days=int(change_value))
                 payload['expireAt'] = new_expire_dt.isoformat().replace('+00:00', 'Z')
             
-            if payload and len(payload) > 1: # Ensure we have something to update besides the uuid
+            if len(payload) > 1:
                 logger.info(f"Updating user {username} ({user_uuid}) with payload: {payload}")
                 
-                # ***THE FIX IS HERE: Use the correct endpoint and run in a thread***
+                # *** FINAL FIX: Use correct endpoint AND run in a non-blocking way ***
                 _, error = await asyncio.to_thread(
                     api_request, 'PATCH', '/api/users', payload=payload
                 )
@@ -449,24 +441,31 @@ async def run_bulk_update_background(task_data: dict):
                 else:
                     success_count += 1
                     logger.info(f"Bulk update SUCCEEDED for user {username}.")
-            else:
-                 # This case handles skipped users (e.g. unlimited ones)
-                 # We already logged it, so we just continue
-                 pass
-
 
         logger.info(f"BACKGROUND TASK finished. Success: {success_count}, Failed: {failed_count}, Skipped: {skipped_count}")
+        
+        # Prepare the final message with the "Back to Main Menu" button
         final_message = job_t('bulk_update_complete_detailed', 
                               success_count=success_count, 
                               failed_count=failed_count, 
                               skipped_count=skipped_count,
                               skipped_reason_unlimited=job_t('skipped_reason_unlimited'))
-        await bot.send_message(chat_id=chat_id, text=final_message)
+        keyboard = [[InlineKeyboardButton(job_t('back_to_main_menu_btn'), callback_data='back_to_main')]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await bot.send_message(chat_id=chat_id, text=final_message, reply_markup=reply_markup)
 
     except Exception as e:
         logger.error(f"FATAL ERROR in background task for chat_id {chat_id}: {e}", exc_info=True)
         error_message = f"❌ یک خطای پیش‌بینی نشده در حین عملیات گروهی رخ داد. لطفاً لاگ‌های ربات را بررسی کنید.\n\n`{e}`"
         await bot.send_message(chat_id=chat_id, text=error_message, parse_mode=ParseMode.MARKDOWN)
+    
+    finally:
+        # Always try to delete the "in progress" message, even if there was an error
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=task_data['message_id_to_delete'])
+        except Exception as e:
+            logger.warning(f"Could not delete 'in progress' message {task_data['message_id_to_delete']}: {e}")
 
 # --- End of Bulk Edit Feature ---
 
@@ -838,7 +837,6 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     user_uuid = context.user_data.get('user_uuid')
     if not user_uuid: return await start(update, context)
     
-    # ***THE FIX IS HERE: Add 'uuid' to the payload for single-user edit***
     payload = {'uuid': user_uuid}
 
     try:
@@ -851,7 +849,7 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         context.job_queue.run_once(lambda j: j.context.delete(), 5, context=msg)
         return AWAITING_LIMIT
 
-    # ***THE FIX IS HERE: Use the correct endpoint for single-user edit***
+    # *** FINAL FIX: Use correct endpoint and payload structure for single edit ***
     _, error = await asyncio.to_thread(api_request, 'PATCH', '/api/users', payload=payload)
     
     if error: 
