@@ -193,12 +193,40 @@ async def show_node_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.message.edit_text(text=message_text, reply_markup=reply_markup)
     return NODE_LIST
 
+# ======================================================================
+# ========= vvvvvvvvvvvv این تابع اصلاح شده است vvvvvvvvvvvv =========
+# ======================================================================
 async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer(); action = query.data
     
     if action == 'go_add_user':
+        # 1. به کاربر اطلاع می‌دهیم که در حال دریافت اطلاعات هستیم
+        await query.message.edit_text(text="⏳ در حال دریافت آخرین کاربر ساخته شده...")
+        
+        # 2. لیست تمام کاربران را از API دریافت می‌کنیم
+        last_username = "N/A" # مقدار پیش‌فرض در صورت بروز خطا
+        users_data, error = api_request('GET', '/api/users')
+        
+        if not error and users_data and 'response' in users_data:
+            users_list = users_data['response']
+            if users_list:
+                try:
+                    # 3. کاربران را بر اساس تاریخ ساخت (createdAt) مرتب می‌کنیم
+                    sorted_users = sorted(
+                        users_list,
+                        key=lambda u: parse_iso_date(u.get('createdAt')) or datetime.min.replace(tzinfo=timezone.utc),
+                        reverse=True
+                    )
+                    # 4. نام کاربری اولین نفر در لیست مرتب‌شده، آخرین کاربر است
+                    last_username = sorted_users[0].get('username', "N/A")
+                except Exception as e:
+                    logger.error(f"Error sorting users: {e}")
+
+        # 5. پیام را با نام آخرین کاربر نمایش می‌دهیم
         context.user_data['new_user_data'] = {}
-        prompt_message = await query.message.edit_text(t('ask_for_new_username', context))
+        prompt_text = t('ask_for_new_username_with_suggestion', context, last_user=last_username)
+        prompt_message = await query.message.edit_text(prompt_text, parse_mode=ParseMode.HTML)
+        
         context.user_data['prompt_message_id'] = prompt_message.message_id
         return AWAITING_NEW_USERNAME
 
@@ -216,6 +244,9 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         keyboard = [[InlineKeyboardButton("English 🇬🇧", callback_data='set_lang_en'), InlineKeyboardButton("Русский 🇷🇺", callback_data='set_lang_ru'), InlineKeyboardButton("فارسی 🇮🇷", callback_data='set_lang_fa')], [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
         await query.message.edit_text(text=t('select_language_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard)); return SELECTING_LANGUAGE
     return MAIN_MENU
+# ======================================================================
+# ========= ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ =========
+# ======================================================================
 
 async def get_new_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['new_user_data']['username'] = update.message.text
@@ -649,9 +680,6 @@ async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 def main() -> None:
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     
-    # ======================================================================
-    # ========= vvvvvvvvvv این بخش دلیل اصلی مشکل بود و اصلاح شد vvvvvvvvvvv
-    # ======================================================================
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -659,7 +687,7 @@ def main() -> None:
             MAIN_MENU: [CallbackQueryHandler(main_menu_handler, pattern="^go_")],
             SELECTING_LANGUAGE: [CallbackQueryHandler(set_lang_callback, pattern='^set_lang_')],
             AWAITING_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_user_card)],
-            USER_MENU: [CallbackQueryHandler(user_menu_handler, pattern="^(?!back_to_main)")], # all buttons except back_to_main
+            USER_MENU: [CallbackQueryHandler(user_menu_handler, pattern="^(?!back_to_main)")],
             QR_VIEW: [CallbackQueryHandler(back_to_user_info_handler, pattern='^back_to_user_info$')],
             AWAITING_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
             AWAITING_EXPIRE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
@@ -679,7 +707,7 @@ def main() -> None:
             AWAITING_HWID_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_hwid_value)],
             SELECTING_SQUADS: [CallbackQueryHandler(squad_selection_handler, pattern='^squad_|^create_user_final$')]
         },
-        # این بخش تضمین می‌کند که دستور /start و دکمه "بازگشت به منوی اصلی" از هر حالتی کار کنند
+        # این بخش تضمین می‌کند که دستور /start و دکمه "بازگشت" از هر حالتی کار کنند
         fallbacks=[
             CommandHandler('start', start),
             CallbackQueryHandler(start, pattern='^back_to_main$')
