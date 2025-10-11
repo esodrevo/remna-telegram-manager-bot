@@ -188,11 +188,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
     if hasattr(update, 'callback_query') and update.callback_query:
         query = update.callback_query
-        try:
-            # Delete the previous message (e.g., the success report) before showing the menu
-            await query.message.delete()
-        except BadRequest:
-            pass # Ignore if message is already deleted
+        # Don't delete the message here, the global handler will do it.
         await context.bot.send_message(chat_id=query.effective_chat.id, text=message_text, reply_markup=reply_markup)
     elif hasattr(update, 'message') and update.message:
          await update.message.reply_text(text=message_text, reply_markup=reply_markup)
@@ -404,7 +400,6 @@ async def run_bulk_update_background(task_data: dict):
             if edit_type == 'volume':
                 current_limit = user.get('trafficLimitBytes')
                 if current_limit is None or current_limit == 0:
-                    logger.info(f"Skipping user {username} (unlimited traffic).")
                     skipped_count += 1
                     continue
                 
@@ -415,13 +410,11 @@ async def run_bulk_update_background(task_data: dict):
             elif edit_type == 'date':
                 current_expire_str = user.get('expireAt')
                 if not current_expire_str:
-                    logger.info(f"Skipping user {username} (no expiration date).")
                     skipped_count += 1
                     continue
 
                 current_expire_dt = parse_iso_date(current_expire_str)
                 if not current_expire_dt:
-                    logger.warning(f"Could not parse expiration date for user {username}: {current_expire_str}")
                     failed_count += 1
                     continue
                 
@@ -429,8 +422,6 @@ async def run_bulk_update_background(task_data: dict):
                 payload['expireAt'] = new_expire_dt.isoformat().replace('+00:00', 'Z')
             
             if len(payload) > 1:
-                logger.info(f"Updating user {username} ({user_uuid}) with payload: {payload}")
-                
                 _, error = await asyncio.to_thread(
                     api_request, 'PATCH', '/api/users', payload=payload
                 )
@@ -440,7 +431,6 @@ async def run_bulk_update_background(task_data: dict):
                     logger.error(f"Bulk update FAILED for user {username}: {error}")
                 else:
                     success_count += 1
-                    logger.info(f"Bulk update SUCCEEDED for user {username}.")
 
         logger.info(f"BACKGROUND TASK finished. Success: {success_count}, Failed: {failed_count}, Skipped: {skipped_count}")
         
@@ -450,8 +440,8 @@ async def run_bulk_update_background(task_data: dict):
                               skipped_count=skipped_count,
                               skipped_reason_unlimited=job_t('skipped_reason_unlimited'))
         
-        # *** THE FIX IS HERE: Use 'go_main_menu' for the callback_data ***
-        keyboard = [[InlineKeyboardButton(job_t('back_to_main_menu_btn'), callback_data='go_main_menu')]]
+        # *** THE FIX IS HERE: Use 'go_main_menu_global' for the callback_data ***
+        keyboard = [[InlineKeyboardButton(job_t('back_to_main_menu_btn'), callback_data='go_main_menu_global')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await bot.send_message(
@@ -474,6 +464,17 @@ async def run_bulk_update_background(task_data: dict):
 
 # --- End of Bulk Edit Feature ---
 
+# ... (Rest of the file is unchanged, but included for completeness) ...
+
+async def go_main_menu_global_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """A global handler to always return to the main menu."""
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.message.delete()
+    except BadRequest:
+        pass # Message already gone
+    return await start(update, context)
 
 async def get_new_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['new_user_data']['username'] = update.message.text
@@ -673,7 +674,7 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     
     data, error = await asyncio.to_thread(api_request, 'POST', '/api/users', payload=payload)
     
-    keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='go_main_menu')]]
+    keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='go_main_menu_global')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if error:
@@ -716,7 +717,7 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     data, error = await asyncio.to_thread(api_request, 'GET', f'/api/users/by-username/{username_to_fetch}')
 
     if error:
-        await sent_message.edit_text(t('error_fetching', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='go_main_menu')]])); return AWAITING_USERNAME
+        await sent_message.edit_text(t('error_fetching', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='go_main_menu_global')]])); return AWAITING_USERNAME
     user_data = data.get('response', {});
     context.user_data['user_data'] = user_data; context.user_data['user_uuid'] = user_data.get('uuid')
     message_text = build_user_info_message(user_data, context)
@@ -824,7 +825,7 @@ async def delete_user_confirmation_handler(update: Update, context: ContextTypes
         else:
             final_text = t('user_deleted_success', context, username=html.escape(username))
         
-        await query.message.edit_text(text=final_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='go_main_menu')]]))
+        await query.message.edit_text(text=final_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='go_main_menu_global')]]))
         return MAIN_MENU
         
     return USER_MENU
@@ -959,8 +960,8 @@ def main() -> None:
     )
     
     application.add_handler(conv_handler)
-    # *** THE FIX IS HERE: Add a global handler for 'go_main_menu' ***
-    application.add_handler(CallbackQueryHandler(start, pattern='^go_main_menu$'))
+    # *** THE FIX IS HERE: Add a global handler for the new callback ***
+    application.add_handler(CallbackQueryHandler(go_main_menu_global_handler, pattern='^go_main_menu_global$'))
     
     logger.info("Bot is running...")
     application.run_polling()
