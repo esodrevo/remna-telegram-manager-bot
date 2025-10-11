@@ -141,12 +141,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     reply_markup = InlineKeyboardMarkup(keyboard)
     message_text = t('main_menu_prompt', context)
     
+    chat_id = update.effective_chat.id
     if update.callback_query:
         try: await update.callback_query.message.delete()
         except BadRequest: pass
-    
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=message_text, reply_markup=reply_markup)
+        await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(text=message_text, reply_markup=reply_markup)
+        
     return MAIN_MENU
+
+async def show_node_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    buttons = [InlineKeyboardButton(node_name, callback_data=f"lognode_{node_name}") for node_name in config.NODES.keys()]
+    keyboard = [[b] for b in buttons] if len(buttons) > 1 else [buttons]
+    keyboard.append([InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    message_text = t('select_node_prompt', context)
+    query = update.callback_query
+    if query:
+        try:
+            await query.message.delete()
+        except BadRequest as e:
+            if "Message to delete not found" not in str(e): logger.error(f"Error deleting message: {e}")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=message_text, reply_markup=reply_markup)
+    return NODE_LIST
 
 async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer(); action = query.data
@@ -176,21 +194,26 @@ async def set_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     context.user_data['lang'] = lang_code; set_language_file(lang_code)
     await context.bot.delete_my_commands(); await context.bot.set_my_commands(COMMANDS.get(lang_code, COMMANDS['en']))
     return await start(update, context)
+# --------------------------------
 
 # --- ADD USER FLOW ---
 async def handle_new_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     username = update.message.text
     context.user_data['new_user']['username'] = username
+    await update.message.delete() # clean up user input
     keyboard = [[InlineKeyboardButton(t('cancel_btn', context), callback_data='cancel_creation')]]
-    await update.message.reply_text(t('ask_for_data_limit', context), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    # Since we deleted the user's message, we need to find the bot's prompt message to edit it
+    # We'll assume the last message sent by the bot is the prompt
+    await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=update.message.message_id - 1, text=t('ask_for_data_limit', context), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
     return AWAITING_DATA_LIMIT
 
 async def handle_data_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         limit_gb = int(update.message.text)
         context.user_data['new_user']['trafficLimitBytes'] = limit_gb * (1024**3) if limit_gb > 0 else 0
+        await update.message.delete()
         keyboard = [[InlineKeyboardButton(t('cancel_btn', context), callback_data='cancel_creation')]]
-        await update.message.reply_text(t('ask_for_expire_days', context), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=update.message.message_id - 1, text=t('ask_for_expire_days', context), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
         return AWAITING_EXPIRE_DAYS
     except ValueError:
         await update.message.reply_text(t('invalid_number', context))
@@ -201,12 +224,13 @@ async def handle_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE)
         days = int(update.message.text)
         expire_at = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat().replace('+00:00', 'Z')
         context.user_data['new_user']['expireAt'] = expire_at
+        await update.message.delete()
         keyboard = [
             [InlineKeyboardButton(t('hwid_disable_btn', context), callback_data='hwid_disable')],
             [InlineKeyboardButton(t('hwid_enable_btn', context), callback_data='hwid_enable')],
             [InlineKeyboardButton(t('cancel_btn', context), callback_data='cancel_creation')]
         ]
-        await update.message.reply_text(t('ask_hwid_disable', context), reply_markup=InlineKeyboardMarkup(keyboard))
+        await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=update.message.message_id - 1, text=t('ask_hwid_disable', context), reply_markup=InlineKeyboardMarkup(keyboard))
         return AWAITING_HWID_CHOICE
     except ValueError:
         await update.message.reply_text(t('invalid_number', context))
@@ -228,23 +252,20 @@ async def handle_hwid_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         limit = int(update.message.text)
         context.user_data['new_user']['hwidDeviceLimit'] = limit
         await update.message.delete()
-        return await prompt_squad_selection(update, context, from_text=True)
+        return await prompt_squad_selection(update, context, from_text=True, message_id_to_edit=update.message.message_id - 1)
     except ValueError:
         await update.message.reply_text(t('invalid_number', context))
         return AWAITING_HWID_LIMIT
 
-async def prompt_squad_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, from_text: bool = False) -> int:
+async def prompt_squad_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, from_text: bool = False, message_id_to_edit: int = None) -> int:
     chat_id = update.effective_chat.id
-    if from_text:
-        # If coming from text, we need to send a new message
-        await context.bot.send_message(chat_id=chat_id, text=t('fetching_squads', context))
-    else:
-        # If coming from a callback, edit the existing message
-        await update.callback_query.message.edit_text(t('fetching_squads', context))
-
+    message_to_edit_id = message_id_to_edit if from_text else update.callback_query.message.message_id
+    
+    await context.bot.edit_message_text(chat_id=chat_id, message_id=message_to_edit_id, text=t('fetching_squads', context))
+    
     data, error = api_request('GET', '/api/internal-squads')
     if error:
-        await context.bot.send_message(chat_id=chat_id, text=t('error_fetching_squads', context))
+        await context.bot.edit_message_text(chat_id=chat_id, message_id=message_to_edit_id, text=t('error_fetching_squads', context))
         return await start(update, context)
 
     squads = data.get('response', [])
@@ -259,10 +280,8 @@ async def prompt_squad_selection(update: Update, context: ContextTypes.DEFAULT_T
     buttons.append([InlineKeyboardButton(t('confirm_squads_btn', context), callback_data='confirm_squads')])
     buttons.append([InlineKeyboardButton(t('cancel_btn', context), callback_data='cancel_creation')])
     
-    # Send as a new message to ensure it's always visible and editable
-    await context.bot.send_message(chat_id=chat_id, text=t('select_squads_prompt', context), reply_markup=InlineKeyboardMarkup(buttons))
+    await context.bot.edit_message_text(chat_id=chat_id, message_id=message_to_edit_id, text=t('select_squads_prompt', context), reply_markup=InlineKeyboardMarkup(buttons))
     return ADD_USER_SQUADS
-
 
 async def handle_squad_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -284,7 +303,6 @@ async def handle_squad_selection(update: Update, context: ContextTypes.DEFAULT_T
             
         context.user_data['new_user']['squads'] = selected_squads
         
-        # Re-render the keyboard with updated selections
         buttons = []
         for uuid, name in context.user_data['available_squads'].items():
             text = f"✅ {name}" if uuid in selected_squads else name
@@ -328,6 +346,7 @@ async def cancel_creation(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 # --- MANAGE USER FLOW ---
 async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
+    sent_message = None
     
     if update.message:
         username_to_fetch = update.message.text
@@ -336,7 +355,11 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     else: 
         username_to_fetch = context.user_data.get('username')
         sent_message = query.message
-        await sent_message.edit_text(t('fetching_user_info', context, username=username_to_fetch), parse_mode=ParseMode.HTML)
+        # In some cases (like after creation), the message might have been deleted.
+        try:
+            await sent_message.edit_text(t('fetching_user_info', context, username=username_to_fetch), parse_mode=ParseMode.HTML)
+        except BadRequest:
+            sent_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('fetching_user_info', context, username=username_to_fetch), parse_mode=ParseMode.HTML)
 
     context.user_data['username'] = username_to_fetch
     data, error = api_request('GET', f'/api/users/by-username/{username_to_fetch}')
@@ -478,12 +501,54 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return await show_user_card(update, context)
 
 async def logs_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    # ... (code is unchanged)
-    pass
+    # ... code is unchanged, can be collapsed
+    query = update.callback_query; await query.answer(); action = query.data
+    if action == 'back_to_main': return await start(update, context)
+    if action == 'go_view_logs': return await show_node_list(update, context)
+    try: await query.message.delete()
+    except BadRequest: pass
+    node_name = action.split('_')[1]; context.user_data['selected_node'] = node_name
+    message = await context.bot.send_message(chat_id=query.message.chat_id, text=t('fetching_logs', context, node_name=node_name), parse_mode=ParseMode.HTML)
+    logs, error = get_logs_from_node(node_name); MAX_LOG_LENGTH = 3800
+    if logs and len(logs) > MAX_LOG_LENGTH: logs = f"...\n{logs[-MAX_LOG_LENGTH:]}"
+    if error:
+        message_text = t('error_fetching_logs', context, node_name=node_name, details=html.escape(str(error or "")))
+        keyboard = [[InlineKeyboardButton(t('back_to_nodes_btn', context), callback_data='go_view_logs')]]
+    else:
+        safe_logs = html.escape(logs or t('logs_empty', context))
+        message_text = f"{t('logs_title', context, node_name=node_name)}\n\n<pre><code>{safe_logs}</code></pre>"
+        keyboard = [[InlineKeyboardButton(t('refresh_logs_btn', context), callback_data=f'lognode_{node_name}')], [InlineKeyboardButton(t('back_to_nodes_btn', context), callback_data='go_view_logs')]]
+    await message.edit_text(text=message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    return VIEWING_LOGS
 
 async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    # ... (code is unchanged)
-    pass
+    # ... code is unchanged, can be collapsed
+    query = update.callback_query; await query.answer()
+    node_name = query.data.split('_')[1]
+    await query.message.edit_text(t('restarting_node', context, node_name=node_name), parse_mode=ParseMode.HTML)
+    node_config = config.NODES.get(node_name)
+    output, error = "", ""
+    if node_config['type'] == 'local':
+        command = "cd /opt/remnanode && docker compose down && docker compose up -d && sleep 5 && docker compose logs --tail=20"
+        try:
+            result = subprocess.run(command, shell=True, capture_output=True, text=True, check=True, encoding='utf-8')
+            output = result.stdout.strip()
+        except subprocess.CalledProcessError as e: error = e.stderr.strip()
+    elif node_config['type'] == 'remote':
+        try:
+            parsed_url = urlparse(node_config.get('url', '')); ip = parsed_url.hostname
+            if ip:
+                restart_url = f"http://{ip}:5555/restart"; headers = {'Authorization': f"Bearer {node_config['token']}"}
+                response = requests.post(restart_url, headers=headers, timeout=90); response.raise_for_status()
+                data = response.json(); output = data.get('logs')
+                if data.get('status') != 'success': error = data.get('details', 'Unknown remote error')
+            else: error = "Could not parse IP from node URL."
+        except Exception as e: error = str(e)
+    if error: message_text = f"{t('node_restart_failed', context, node_name=node_name)}\n\n<pre><code>{html.escape(error)}</code></pre>"
+    else: message_text = f"{t('node_restart_success', context, node_name=node_name)}\n\n<b>{t('logs_title', context, node_name=node_name)}</b>\n<pre><code>{html.escape(output)}</code></pre>"
+    keyboard = [[InlineKeyboardButton(t('back_to_restart_list_btn', context), callback_data='go_restart_nodes')]]
+    await query.message.edit_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    return MAIN_MENU
 
 def main() -> None:
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
