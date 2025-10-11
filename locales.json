@@ -1,5 +1,7 @@
 {
   "fa": {
+    "user_created_success_detailed": "✅ کاربر <b>{username}</b> با موفقیت ساخته شد.\n\n📊 <b>حجم:</b> {limit}\n🗓 <b>تاریخ انقضا:</b> {expire_date}\n\n🔗 <b>لینک سابسکریپشن:</b>\n<code>{sub_link}</code>",
+    "fetching_squads_prompt": "⏳ در حال دریافت لیست اسکوادها...",
     "add_user_btn": "➕ افزودن کاربر",
     "ask_for_new_username": "لطفاً نام کاربری کاربر جدید را وارد کنید:",
     "ask_for_data_limit": "لطفاً محدودیت حجم را به <b>گیگابایت (GB)</b> وارد کنید (برای نامحدود، عدد 0 را وارد کنید):",
@@ -90,6 +92,8 @@
     "delete_cancelled": "عملیات حذف لغو شد."
   },
   "en": {
+    "user_created_success_detailed": "✅ User <b>{username}</b> created successfully.\n\n📊 <b>Limit:</b> {limit}\n🗓 <b>Expires:</b> {expire_date}\n\n🔗 <b>Subscription Link:</b>\n<code>{sub_link}</code>",
+    "fetching_squads_prompt": "⏳ Fetching squads list...",
     "add_user_btn": "➕ Add User",
     "ask_for_new_username": "Please enter the new username:",
     "ask_for_data_limit": "Please enter the data limit in <b>GB</b> (enter 0 for unlimited):",
@@ -180,6 +184,8 @@
     "delete_cancelled": "Deletion cancelled."
   },
   "ru": {
+    "user_created_success_detailed": "✅ Пользователь <b>{username}</b> успешно создан.\n\n📊 <b>Лимит:</b> {limit}\n🗓 <b>Истекает:</b> {expire_date}\n\n🔗 <b>Ссылка на подписку:</b>\n<code>{sub_link}</code>",
+    "fetching_squads_prompt": "⏳ Получение списка отрядов...",
     "add_user_btn": "➕ Добавить пользователя",
     "ask_for_new_username": "Введите имя нового пользователя:",
     "ask_for_data_limit": "Введите лимит трафика в <b>ГБ</b> (введите 0 для безлимитного):",
