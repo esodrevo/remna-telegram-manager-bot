@@ -310,29 +310,38 @@ async def delete_user_confirmation_handler(update: Update, context: ContextTypes
     await query.answer()
     action = query.data
 
+    # Get the username for the success message before deleting anything
+    username = context.user_data.get('user_data', {}).get('username', '')
+
+    # First, delete the confirmation message in both cases
+    await query.message.delete()
+
     if action == 'cancel_delete':
-        await query.message.edit_text(t('delete_cancelled', context))
+        # No extra message needed, just go back to the user card
         return await show_user_card(update, context)
 
     if action == 'confirm_delete':
-        username = context.user_data.get('user_data', {}).get('username', '')
-        await query.message.edit_text(t('deleting_user', context))
         user_uuid = context.user_data.get('user_uuid')
         if not user_uuid:
-            await query.message.edit_text("Error: User UUID not found.")
+            await context.bot.send_message(chat_id=query.message.chat_id, text="Error: User UUID not found.")
             return await start(update, context)
 
         _, error = api_request('DELETE', f'/api/users/{user_uuid}')
 
         if error:
-            await query.message.edit_text(f"❌ Error deleting user: {error}")
+            # Send the error as a new message
+            await context.bot.send_message(chat_id=query.message.chat_id, text=f"❌ Error deleting user: {error}")
         else:
-            await query.message.edit_text(
-                t('user_deleted_success', context, username=username),
+            # Send the success message as a new, persistent message
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=t('user_deleted_success', context, username=username),
                 parse_mode=ParseMode.HTML
             )
         
+        # Finally, show the main menu
         return await start(update, context)
+        
     return USER_MENU
 
 async def back_to_user_info_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
