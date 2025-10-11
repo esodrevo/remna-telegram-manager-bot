@@ -156,9 +156,6 @@ async def post_init(application: Application):
     lang = get_lang_from_file()
     await application.bot.set_my_commands(COMMANDS.get(lang, COMMANDS['en']))
 
-# ======================================================================
-# ========= vvvvvvvvvvvv تابع اصلاح شده اصلی اینجاست vvvvvvvvvvvv ========
-# ======================================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update): return ConversationHandler.END
     
@@ -172,7 +169,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     reply_markup = InlineKeyboardMarkup(keyboard)
     message_text = t('main_menu_prompt', context)
     
-    # اول پیام را ویرایش یا ارسال می‌کنیم
     if update.callback_query:
         try:
             await update.callback_query.message.edit_text(message_text, reply_markup=reply_markup)
@@ -181,13 +177,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     else:
         await update.message.reply_text(text=message_text, reply_markup=reply_markup)
         
-    # و سپس، بعد از نمایش منوی اصلی، اطلاعات مکالمه قبلی را پاک می‌کنیم
     context.user_data.clear()
     
     return MAIN_MENU
-# ======================================================================
-# ========= ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ========
-# ======================================================================
 
 async def show_node_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     buttons = [InlineKeyboardButton(node_name, callback_data=f"lognode_{node_name}") for node_name in config.NODES.keys()]
@@ -606,7 +598,6 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     return await show_user_card(update, context)
 
-
 async def logs_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer();
     node_name = query.data.split('_')[1]
@@ -657,13 +648,17 @@ async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 def main() -> None:
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     
+    # ======================================================================
+    # ========= vvvvvvvvvvvv این بخش اصلاح شده است vvvvvvvvvvvv =========
+    # ======================================================================
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            MAIN_MENU: [CallbackQueryHandler(main_menu_handler)],
+            # این کنترل‌کننده حالا فقط به دکمه‌هایی که با "go_" شروع می‌شوند واکنش نشان می‌دهد
+            MAIN_MENU: [CallbackQueryHandler(main_menu_handler, pattern="^go_")],
             SELECTING_LANGUAGE: [CallbackQueryHandler(set_lang_callback, pattern='^set_lang_')],
             AWAITING_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_user_card)],
-            USER_MENU: [CallbackQueryHandler(user_menu_handler)],
+            USER_MENU: [CallbackQueryHandler(user_menu_handler, pattern="^(?!back_to_main)")], # all buttons except back_to_main
             QR_VIEW: [CallbackQueryHandler(back_to_user_info_handler, pattern='^back_to_user_info$')],
             AWAITING_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
             AWAITING_EXPIRE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
@@ -683,13 +678,16 @@ def main() -> None:
             AWAITING_HWID_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_hwid_value)],
             SELECTING_SQUADS: [CallbackQueryHandler(squad_selection_handler, pattern='^squad_|^create_user_final$')]
         },
-        # این بخش تضمین می‌کند که دکمه بازگشت همیشه و از هر حالتی کار کند
+        # این بخش تضمین می‌کند که دستور /start و دکمه "بازگشت به منوی اصلی" از هر حالتی کار کنند
         fallbacks=[
             CommandHandler('start', start),
             CallbackQueryHandler(start, pattern='^back_to_main$')
         ], 
         allow_reentry=True
     )
+    # ======================================================================
+    # ========= ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ =========
+    # ======================================================================
     
     application.add_handler(conv_handler)
     logger.info("Bot is running...")
