@@ -4,6 +4,20 @@ A powerful and easy-to-use Telegram bot designed to manage your RemnaWave panel 
 
 The entire project is managed through a single, smart installer script, making setup, configuration, and updates straightforward.
 
+## 🚀 Installation
+
+Connect to your server via SSH and run the following single-line command. The script is interactive and will guide you through the setup process.
+
+```bash
+curl -sL https://raw.githubusercontent.com/esodrevo/remna-telegram-manager-bot/main/installer.sh -o installer.sh && sudo bash installer.sh
+```
+
+During the installation, you will be prompted to enter the following:
+1.  Your Telegram Bot Token (from @BotFather)
+2.  Your numeric Telegram User ID (from @userinfobot)
+3.  Your Panel's URL
+4.  Your Panel's API Token
+
 ## ✨ Features
 
 The bot comes packed with features to make panel administration seamless:
@@ -43,20 +57,6 @@ Get Subscription Link & QR Code: Retrieve subscription and Happ links, along wit
 - Secure: Access is restricted to a single, predefined Telegram Admin ID.
 - Multi-Language Support: The interface is available in English, Persian (فارسی), and Russian (Русский).
 - Clean & Intuitive: The bot features a clean, conversational flow, automatically deleting old messages to prevent clutter.
-
-## 🚀 Installation
-
-Connect to your server via SSH and run the following single-line command. The script is interactive and will guide you through the setup process.
-
-```bash
-curl -sL https://raw.githubusercontent.com/esodrevo/remna-telegram-manager-bot/main/installer.sh -o installer.sh && sudo bash installer.sh
-```
-
-During the installation, you will be prompted to enter the following:
-1.  Your Telegram Bot Token (from @BotFather)
-2.  Your numeric Telegram User ID (from @userinfobot)
-3.  Your Panel's URL
-4.  Your Panel's API Token
 
 ## 🛠️ Usage
 
