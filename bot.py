@@ -650,7 +650,7 @@ async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # *** MODIFICATION START ***
         # Calculate the base expiration date and then set the time to 22:00:00
         expire_date = datetime.now(timezone.utc) + timedelta(days=days)
-        expire_date = expire_date.replace(hour=22, minute=0, second=0, microsecond=0)
+        expire_date = expire_date.replace(hour=18, minute=30, second=0, microsecond=0)
         # *** MODIFICATION END ***
         
         context.user_data['new_user_data']['expireAt'] = expire_date.isoformat().replace('+00:00', 'Z')
@@ -1008,7 +1008,7 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             # Calculate the new expiration date and then set the time to 22:00:00
             days = int(update.message.text)
             new_expire_date = datetime.now(timezone.utc) + timedelta(days=days)
-            new_expire_date = new_expire_date.replace(hour=22, minute=0, second=0, microsecond=0)
+            new_expire_date = new_expire_date.replace(hour=18, minute=30, second=0, microsecond=0)
             payload["expireAt"] = new_expire_date.isoformat().replace('+00:00', 'Z')
             # *** MODIFICATION END ***
     except (ValueError, TypeError):
