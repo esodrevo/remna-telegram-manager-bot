@@ -34,8 +34,9 @@ COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("st
     CONFIRM_DELETE, AWAITING_NEW_USERNAME, AWAITING_DATA_LIMIT, AWAITING_EXPIRE_DAYS,
     SELECTING_HWID_OPTION, AWAITING_HWID_VALUE, SELECTING_SQUADS, EDIT_ALL_USERS_MENU,
     AWAITING_BULK_VALUE, CONFIRM_BULK_ACTION, AWAITING_HOURS_FOR_UPDATED_LIST,
-    SELECT_BULK_HWID_ACTION, AWAITING_BULK_HWID_VALUE, AWAITING_TIMEZONE_SETTING
-) = range(24)
+    SELECT_BULK_HWID_ACTION, AWAITING_BULK_HWID_VALUE, AWAITING_TIMEZONE_SETTING,
+    EXPIRING_USERS_MENU
+) = range(25)
 
 
 def get_settings() -> dict:
@@ -221,7 +222,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         [InlineKeyboardButton(t('restart_nodes_btn', context), callback_data='go_restart_nodes'),
          InlineKeyboardButton(t('view_logs_btn', context), callback_data='go_view_logs')],
         [InlineKeyboardButton(t('edit_all_users_btn', context), callback_data='go_edit_all_users')],
-        [InlineKeyboardButton(t('updated_users_btn', context), callback_data='go_updated_users')],
+        [InlineKeyboardButton(t('updated_users_btn', context), callback_data='go_updated_users'),
+         InlineKeyboardButton(t('expiring_users_btn', context), callback_data='go_expiring_users')],
         [InlineKeyboardButton(t('set_expire_time_btn', context), callback_data='go_set_expire_time'),
          InlineKeyboardButton(t('change_language_btn', context), callback_data='go_change_language')]
     ]
@@ -319,6 +321,8 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return AWAITING_TIMEZONE_SETTING
     if action == 'go_edit_all_users':
         return await show_edit_all_users_menu(update, context)
+    if action == 'go_expiring_users':
+        return await show_expiring_users_menu(update, context)
     
     if action == 'go_updated_users':
         prompt_message = await query.message.edit_text(t('ask_for_hours_ago', context), parse_mode=ParseMode.HTML)
@@ -1197,6 +1201,97 @@ async def restart_node_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.message.edit_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
     return MAIN_MENU
 
+# --- Start of Expiring Users Feature ---
+async def show_expiring_users_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    keyboard = [
+        [InlineKeyboardButton(t('expiring_today_btn', context), callback_data='expiring_0')],
+        [InlineKeyboardButton(t('expiring_tomorrow_btn', context), callback_data='expiring_1')],
+        [InlineKeyboardButton(t('expiring_day_after_tomorrow_btn', context), callback_data='expiring_2')],
+        [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text=t('expiring_users_prompt', context), reply_markup=reply_markup)
+    return EXPIRING_USERS_MENU
+
+async def expiring_users_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    days_offset = int(query.data.split('_')[1]) # 0 for today, 1 for tomorrow, 2 for day after
+    
+    await query.message.edit_text(text=t('fetching_expiring_users', context))
+    
+    all_users_response, error = await asyncio.to_thread(api_request, 'GET', '/api/users')
+    
+    keyboard_back = [[InlineKeyboardButton(t('back_btn', context), callback_data='go_expiring_users')]]
+    reply_markup_back = InlineKeyboardMarkup(keyboard_back)
+
+    if error:
+        await query.message.edit_text(
+            t('error_fetching_all_users', context, error=error), 
+            reply_markup=reply_markup_back
+        )
+        return EXPIRING_USERS_MENU
+
+    all_users_list = all_users_response.get('response', {}).get('users', [])
+    
+    now_utc = datetime.now(timezone.utc)
+    
+    if days_offset == 0: # Today
+        start_range = now_utc
+        end_range = now_utc.replace(hour=23, minute=59, second=59, microsecond=999999)
+    else: # Tomorrow or Day after
+        target_day_start = (now_utc + timedelta(days=days_offset)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_range = target_day_start
+        end_range = target_day_start.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    expiring_users = []
+    for user in all_users_list:
+        expire_at_str = user.get('expireAt')
+        if not expire_at_str:
+            continue
+        
+        expire_dt = parse_iso_date(expire_at_str)
+        if expire_dt and start_range <= expire_dt <= end_range:
+            expiring_users.append({
+                'username': user.get('username', 'N/A'),
+                'expire_dt': expire_dt
+            })
+    
+    expiring_users.sort(key=lambda x: x['expire_dt'])
+    
+    period_key_map = {0: 'today', 1: 'tomorrow', 2: 'day_after_tomorrow'}
+    period_text = t(f'period_{period_key_map[days_offset]}', context)
+    
+    if not expiring_users:
+        await query.message.edit_text(t('no_expiring_users_found', context), reply_markup=reply_markup_back)
+        return EXPIRING_USERS_MENU
+
+    report_lines = [t('expiring_users_report_title', context, period=period_text)]
+    for user in expiring_users:
+        expire_str = user['expire_dt'].strftime('%Y-%m-%d %H:%M')
+        report_lines.append(f"👤 `{user['username']}` - ⏳ {expire_str}")
+        
+    report_content = "\n".join(report_lines)
+    
+    if len(report_content) > 4000:
+        file_content = "\n".join([f"{user['username']} - {user['expire_dt'].strftime('%Y-%m-%d %H:%M:%S')}" for user in expiring_users])
+        report_file = io.BytesIO(file_content.encode('utf-8'))
+        await context.bot.send_document(
+            chat_id=query.effective_chat.id,
+            document=report_file,
+            filename=f'expiring_users_{period_key_map[days_offset]}.txt',
+            caption=t('expiring_users_report_title', context, period=period_text)
+        )
+        await query.message.edit_text(t('user_list_sent_as_file', context), reply_markup=reply_markup_back)
+    else:
+        await query.message.edit_text(report_content, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup_back)
+
+    return EXPIRING_USERS_MENU
+
+# --- End of Expiring Users Feature ---
+
 def main() -> None:
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     
@@ -1236,6 +1331,11 @@ def main() -> None:
             
             AWAITING_HOURS_FOR_UPDATED_LIST: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_hours_and_fetch_users)],
             AWAITING_TIMEZONE_SETTING: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_timezone_setting)],
+            
+            EXPIRING_USERS_MENU: [
+                CallbackQueryHandler(expiring_users_handler, pattern=r'^expiring_'),
+                CallbackQueryHandler(show_expiring_users_menu, pattern=r'^go_expiring_users$')
+            ],
         },
         fallbacks=[
             CommandHandler('start', start),
