@@ -34,14 +34,53 @@ COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("st
     CONFIRM_DELETE, AWAITING_NEW_USERNAME, AWAITING_DATA_LIMIT, AWAITING_EXPIRE_DAYS,
     SELECTING_HWID_OPTION, AWAITING_HWID_VALUE, SELECTING_SQUADS, EDIT_ALL_USERS_MENU,
     AWAITING_BULK_VALUE, CONFIRM_BULK_ACTION, AWAITING_HOURS_FOR_UPDATED_LIST,
-    SELECT_BULK_HWID_ACTION, AWAITING_BULK_HWID_VALUE
-) = range(23)
+    SELECT_BULK_HWID_ACTION, AWAITING_BULK_HWID_VALUE, AWAITING_TIMEZONE_SETTING
+) = range(24)
 
+
+def get_settings() -> dict:
+    try:
+        with open('settings.json', 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_settings(settings: dict):
+    with open('settings.json', 'w', encoding='utf-8') as f:
+        json.dump(settings, f, indent=4)
 
 def get_lang_from_file() -> str:
+    return get_settings().get('language', 'en')
+
+def set_language_file(lang: str):
+    settings = get_settings()
+    settings['language'] = lang
+    save_settings(settings)
+
+def parse_timezone_setting():
+    """Parses the timezone string 'GMT±H:MM/HH:MM' from settings.json"""
+    settings = get_settings()
+    tz_string = settings.get('expire_time_setting')
+    if not tz_string:
+        return None
+
+    match = re.match(r'GMT([+-])(\d{1,2}):(\d{2})/(\d{2}):(\d{2})', tz_string.upper())
+    if not match:
+        return None
+
+    sign, h_offset, m_offset, hour, minute = match.groups()
+    h_offset, m_offset, hour, minute = int(h_offset), int(m_offset), int(hour), int(minute)
+
+    if sign == '-':
+        h_offset = -h_offset
+        m_offset = -m_offset
+
     try:
-        with open('settings.json', 'r', encoding='utf-8') as f: return json.load(f).get('language', 'en')
-    except (FileNotFoundError, json.JSONDecodeError): return 'en'
+        tz = timezone(timedelta(hours=h_offset, minutes=m_offset))
+        time_obj = datetime.strptime(f"{hour}:{minute}", "%H:%M").time()
+        return tz, time_obj
+    except Exception:
+        return None
 
 def get_lang(context: ContextTypes.DEFAULT_TYPE) -> str:
     if context and hasattr(context, 'user_data') and 'lang' in context.user_data:
@@ -51,9 +90,6 @@ def get_lang(context: ContextTypes.DEFAULT_TYPE) -> str:
 
 def t(key: str, context: ContextTypes.DEFAULT_TYPE, **kwargs) -> str:
     lang = get_lang(context); return LANGUAGES.get(lang, LANGUAGES['en']).get(key, key).format(**kwargs)
-
-def set_language_file(lang: str):
-    with open('settings.json', 'w', encoding='utf-8') as f: json.dump({'language': lang}, f)
 
 def is_admin(update: Update) -> bool:
     if not update.effective_user: return False
@@ -186,7 +222,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
          InlineKeyboardButton(t('view_logs_btn', context), callback_data='go_view_logs')],
         [InlineKeyboardButton(t('edit_all_users_btn', context), callback_data='go_edit_all_users')],
         [InlineKeyboardButton(t('updated_users_btn', context), callback_data='go_updated_users')],
-        [InlineKeyboardButton(t('change_language_btn', context), callback_data='go_change_language')]
+        [InlineKeyboardButton(t('set_expire_time_btn', context), callback_data='go_set_expire_time'),
+         InlineKeyboardButton(t('change_language_btn', context), callback_data='go_change_language')]
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -268,6 +305,15 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if action == 'go_change_language':
         keyboard = [[InlineKeyboardButton("English 🇬🇧", callback_data='set_lang_en'), InlineKeyboardButton("Русский 🇷🇺", callback_data='set_lang_ru'), InlineKeyboardButton("فارسی 🇮🇷", callback_data='set_lang_fa')], [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
         await query.message.edit_text(text=t('select_language_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard)); return SELECTING_LANGUAGE
+    if action == 'go_set_expire_time':
+        settings = get_settings()
+        current_setting = settings.get('expire_time_setting', t('not_set', context))
+        prompt_message = await query.message.edit_text(
+            t('ask_for_timezone_and_time', context, current_setting=current_setting),
+            parse_mode=ParseMode.HTML
+        )
+        context.user_data['prompt_message_id'] = prompt_message.message_id
+        return AWAITING_TIMEZONE_SETTING
     if action == 'go_edit_all_users':
         return await show_edit_all_users_menu(update, context)
     
@@ -612,6 +658,48 @@ async def process_hours_and_fetch_users(update: Update, context: ContextTypes.DE
     return ConversationHandler.END
 # --- END OF NEW FEATURE ---
 
+async def process_timezone_setting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        await update.message.delete()
+        prompt_message_id = context.user_data.pop('prompt_message_id', None)
+        if prompt_message_id:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_message_id)
+    except BadRequest:
+        pass
+
+    tz_string = update.message.text.strip()
+    match = re.match(r'GMT([+-])(\d{1,2}):(\d{2})/(\d{2}):(\d{2})', tz_string.upper())
+
+    if not match:
+        msg = await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=t('invalid_timezone_format', context),
+            parse_mode=ParseMode.HTML
+        )
+        context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 10)
+        # Resend the prompt
+        settings = get_settings()
+        current_setting = settings.get('expire_time_setting', t('not_set', context))
+        prompt_message = await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=t('ask_for_timezone_and_time', context, current_setting=current_setting),
+            parse_mode=ParseMode.HTML
+        )
+        context.user_data['prompt_message_id'] = prompt_message.message_id
+        return AWAITING_TIMEZONE_SETTING
+
+    settings = get_settings()
+    settings['expire_time_setting'] = tz_string.upper()
+    save_settings(settings)
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=t('timezone_set_success', context),
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]),
+        parse_mode=ParseMode.HTML
+    )
+    return MAIN_MENU
+
 async def get_new_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['new_user_data']['username'] = update.message.text
     try:
@@ -648,12 +736,22 @@ async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if days < 0: raise ValueError
         
         # *** MODIFICATION START ***
-        # Calculate the base expiration date and then set the time to 22:00:00
-        expire_date = datetime.now(timezone.utc) + timedelta(days=days)
-        expire_date = expire_date.replace(hour=18, minute=30, second=0, microsecond=0)
+        expire_time_setting = parse_timezone_setting()
+        if expire_time_setting:
+            target_tz, target_time = expire_time_setting
+            now_in_target_tz = datetime.now(target_tz)
+            expire_date_local = now_in_target_tz + timedelta(days=days)
+            expire_datetime_local = expire_date_local.replace(
+                hour=target_time.hour, minute=target_time.minute, second=0, microsecond=0
+            )
+            expire_datetime_utc = expire_datetime_local.astimezone(timezone.utc)
+        else:
+            # Fallback to original behavior
+            expire_datetime_utc = datetime.now(timezone.utc) + timedelta(days=days)
+            expire_datetime_utc = expire_datetime_utc.replace(hour=18, minute=30, second=0, microsecond=0)
         # *** MODIFICATION END ***
         
-        context.user_data['new_user_data']['expireAt'] = expire_date.isoformat().replace('+00:00', 'Z')
+        context.user_data['new_user_data']['expireAt'] = expire_datetime_utc.isoformat().replace('+00:00', 'Z')
         
         await update.message.delete()
         
@@ -1005,11 +1103,22 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             new_limit_gb = float(update.message.text); payload["trafficLimitBytes"] = int(new_limit_gb * 1024**3)
         elif context.user_data.get('editing') == 'expire':
             # *** MODIFICATION START ***
-            # Calculate the new expiration date and then set the time to 22:00:00
             days = int(update.message.text)
-            new_expire_date = datetime.now(timezone.utc) + timedelta(days=days)
-            new_expire_date = new_expire_date.replace(hour=18, minute=30, second=0, microsecond=0)
-            payload["expireAt"] = new_expire_date.isoformat().replace('+00:00', 'Z')
+            expire_time_setting = parse_timezone_setting()
+            if expire_time_setting:
+                target_tz, target_time = expire_time_setting
+                now_in_target_tz = datetime.now(target_tz)
+                new_expire_date_local = now_in_target_tz + timedelta(days=days)
+                new_expire_datetime_local = new_expire_date_local.replace(
+                    hour=target_time.hour, minute=target_time.minute, second=0, microsecond=0
+                )
+                new_expire_datetime_utc = new_expire_datetime_local.astimezone(timezone.utc)
+            else:
+                # Fallback to original behavior
+                new_expire_datetime_utc = datetime.now(timezone.utc) + timedelta(days=days)
+                new_expire_datetime_utc = new_expire_datetime_utc.replace(hour=18, minute=30, second=0, microsecond=0)
+
+            payload["expireAt"] = new_expire_datetime_utc.isoformat().replace('+00:00', 'Z')
             # *** MODIFICATION END ***
     except (ValueError, TypeError):
         msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('invalid_number', context))
@@ -1120,6 +1229,7 @@ def main() -> None:
             AWAITING_BULK_HWID_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_bulk_hwid_value)],
             
             AWAITING_HOURS_FOR_UPDATED_LIST: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_hours_and_fetch_users)],
+            AWAITING_TIMEZONE_SETTING: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_timezone_setting)],
         },
         fallbacks=[
             CommandHandler('start', start),
