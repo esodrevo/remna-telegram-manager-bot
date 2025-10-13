@@ -1,5 +1,10 @@
 {
   "fa": {
+    "set_expire_time_btn": "⚙️ تنظیم ساعت انقضا",
+    "ask_for_timezone_and_time": "<b>تنظیم زمان انقضای پیش‌فرض</b>\n\nدر این بخش می‌توانید ساعت و منطقه‌ی زمانی پیش‌فرض برای تاریخ انقضای کاربران را تعیین کنید.\n\n<b>تنظیم فعلی:</b> <code>{current_setting}</code>\n\nلطفا تایم زون و ساعت مورد نظر را با فرمت زیر وارد کنید:\nمثال: `GMT+3:30/22:00`",
+    "timezone_set_success": "✅ تنظیمات زمان با موفقیت ذخیره شد.",
+    "invalid_timezone_format": "❌ فرمت وارد شده نامعتبر است.\nلطفاً از فرمت `GMT±H:MM/HH:MM` استفاده کنید (مثال: `GMT-4:00/20:30`).",
+    "not_set": "تنظیم نشده (پیش‌فرض: 18:30 UTC)",
     "user_created_success_detailed": "✅ کاربر <b>{username}</b> با موفقیت ساخته شد.\n\n📊 <b>حجم:</b> {limit}\n🗓 <b>تاریخ انقضا:</b> {expire_date}\n\n🔗 <b>لینک سابسکریپشن:</b>\n<code>{sub_link}</code>",
     "fetching_squads_prompt": "⏳ در حال دریافت لیست اسکوادها...",
     "add_user_btn": "➕ افزودن کاربر",
@@ -127,6 +132,11 @@
     "change_type_hwid": "محدودیت HWID"
   },
   "en": {
+    "set_expire_time_btn": "⚙️ Set Expire Time",
+    "ask_for_timezone_and_time": "<b>Set Default Expiration Time</b>\n\nHere you can set the default time and timezone for user expiration dates.\n\n<b>Current Setting:</b> <code>{current_setting}</code>\n\nPlease enter the timezone and time in the following format:\nExample: `GMT+3:30/22:00`",
+    "timezone_set_success": "✅ Time settings saved successfully.",
+    "invalid_timezone_format": "❌ The entered format is invalid.\nPlease use the `GMT±H:MM/HH:MM` format (e.g., `GMT-4:00/20:30`).",
+    "not_set": "Not set (Default: 18:30 UTC)",
     "user_created_success_detailed": "✅ User <b>{username}</b> created successfully.\n\n📊 <b>Limit:</b> {limit}\n🗓 <b>Expires:</b> {expire_date}\n\n🔗 <b>Subscription Link:</b>\n<code>{sub_link}</code>",
     "fetching_squads_prompt": "⏳ Fetching squads list...",
     "add_user_btn": "➕ Add User",
@@ -254,6 +264,11 @@
     "change_type_hwid": "HWID Limit"
   },
   "ru": {
+    "set_expire_time_btn": "⚙️ Установить время",
+    "ask_for_timezone_and_time": "<b>Установка времени истечения срока по умолчанию</b>\n\nЗдесь вы можете установить время и часовой пояс по умолчанию для дат истечения срока действия пользователей.\n\n<b>Текущая настройка:</b> <code>{current_setting}</code>\n\nПожалуйста, введите часовой пояс и время в следующем формате:\nПример: `GMT+3:00/22:00`",
+    "timezone_set_success": "✅ Настройки времени успешно сохранены.",
+    "invalid_timezone_format": "❌ Введенный формат недействителен.\nПожалуйста, используйте формат `GMT±H:MM/HH:MM` (например, `GMT-4:00/20:30`).",
+    "not_set": "Не установлено (По умолчанию: 18:30 UTC)",
     "user_created_success_detailed": "✅ Пользователь <b>{username}</b> успешно создан.\n\n📊 <b>Лимит:</b> {limit}\n🗓 <b>Истекает:</b> {expire_date}\n\n🔗 <b>Ссылка на подписку:</b>\n<code>{sub_link}</code>",
     "fetching_squads_prompt": "⏳ Получение списка отрядов...",
     "add_user_btn": "➕ Добавить пользователя",
