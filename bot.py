@@ -308,9 +308,12 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if action == 'go_set_expire_time':
         settings = get_settings()
         current_setting = settings.get('expire_time_setting', t('not_set', context))
+        keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         prompt_message = await query.message.edit_text(
             t('ask_for_timezone_and_time', context, current_setting=current_setting),
-            parse_mode=ParseMode.HTML
+            parse_mode=ParseMode.HTML,
+            reply_markup=reply_markup
         )
         context.user_data['prompt_message_id'] = prompt_message.message_id
         return AWAITING_TIMEZONE_SETTING
@@ -680,10 +683,13 @@ async def process_timezone_setting(update: Update, context: ContextTypes.DEFAULT
         # Resend the prompt
         settings = get_settings()
         current_setting = settings.get('expire_time_setting', t('not_set', context))
+        keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         prompt_message = await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=t('ask_for_timezone_and_time', context, current_setting=current_setting),
-            parse_mode=ParseMode.HTML
+            parse_mode=ParseMode.HTML,
+            reply_markup=reply_markup
         )
         context.user_data['prompt_message_id'] = prompt_message.message_id
         return AWAITING_TIMEZONE_SETTING
