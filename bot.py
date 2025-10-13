@@ -179,7 +179,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     get_lang(context)
     
-    # *** THE FIX IS HERE: Re-arranged keyboard layout ***
     keyboard = [
         [InlineKeyboardButton(t('add_user_btn', context), callback_data='go_add_user'),
          InlineKeyboardButton(t('manage_user_btn', context), callback_data='go_manage_user')],
@@ -189,7 +188,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         [InlineKeyboardButton(t('updated_users_btn', context), callback_data='go_updated_users')],
         [InlineKeyboardButton(t('change_language_btn', context), callback_data='go_change_language')]
     ]
-    # *** END OF FIX ***
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     message_text = t('main_menu_prompt', context)
@@ -648,12 +646,17 @@ async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     try:
         days = int(update.message.text)
         if days < 0: raise ValueError
+        
+        # *** MODIFICATION START ***
+        # Calculate the base expiration date and then set the time to 22:00:00
         expire_date = datetime.now(timezone.utc) + timedelta(days=days)
+        expire_date = expire_date.replace(hour=22, minute=0, second=0, microsecond=0)
+        # *** MODIFICATION END ***
+        
         context.user_data['new_user_data']['expireAt'] = expire_date.isoformat().replace('+00:00', 'Z')
         
         await update.message.delete()
         
-        # *** MODIFIED: Use new button texts and callbacks ***
         keyboard = [
             [InlineKeyboardButton(t('enable_hwid_btn', context), callback_data='hwid_enable')],
             [InlineKeyboardButton(t('disable_hwid_btn', context), callback_data='hwid_disable')]
@@ -670,6 +673,7 @@ async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
         return AWAITING_EXPIRE_DAYS
 
+
 async def hwid_option_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -680,7 +684,6 @@ async def hwid_option_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.message.edit_text(t('fetching_squads_prompt', context))
         return await fetch_and_show_squads(update, context, message_id=query.message.message_id)
     
-    # *** MODIFIED: Handle the 'enable' action ***
     elif action == 'hwid_enable':
         await query.message.edit_text(t('ask_for_hwid_value', context))
         return AWAITING_HWID_VALUE
@@ -1001,7 +1004,13 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         if context.user_data.get('editing') == 'limit':
             new_limit_gb = float(update.message.text); payload["trafficLimitBytes"] = int(new_limit_gb * 1024**3)
         elif context.user_data.get('editing') == 'expire':
-            days = int(update.message.text); payload["expireAt"] = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat().replace('+00:00', 'Z')
+            # *** MODIFICATION START ***
+            # Calculate the new expiration date and then set the time to 22:00:00
+            days = int(update.message.text)
+            new_expire_date = datetime.now(timezone.utc) + timedelta(days=days)
+            new_expire_date = new_expire_date.replace(hour=22, minute=0, second=0, microsecond=0)
+            payload["expireAt"] = new_expire_date.isoformat().replace('+00:00', 'Z')
+            # *** MODIFICATION END ***
     except (ValueError, TypeError):
         msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('invalid_number', context))
         context.job_queue.run_once(lambda j: j.context.delete(), 5, context=msg)
@@ -1014,6 +1023,7 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         context.job_queue.run_once(lambda j: j.context.delete(), 5, context=msg)
     
     return await show_user_card(update, context)
+
 
 async def logs_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer();
