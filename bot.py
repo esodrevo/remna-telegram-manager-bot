@@ -1268,15 +1268,30 @@ async def expiring_users_handler(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.edit_text(t('no_expiring_users_found', context), reply_markup=reply_markup_back)
         return EXPIRING_USERS_MENU
 
+    # *** MODIFICATION START ***
+    target_tz_info = parse_timezone_setting()
+    target_tz = target_tz_info[0] if target_tz_info else timezone.utc
+    # *** MODIFICATION END ***
+
     report_lines = [t('expiring_users_report_title', context, period=period_text)]
     for user in expiring_users:
-        expire_str = user['expire_dt'].strftime('%Y-%m-%d %H:%M')
+        # *** MODIFICATION START ***
+        local_expire_dt = user['expire_dt'].astimezone(target_tz)
+        expire_str = local_expire_dt.strftime('%Y-%m-%d %H:%M')
+        # *** MODIFICATION END ***
         report_lines.append(f"👤 `{user['username']}` - ⏳ {expire_str}")
         
     report_content = "\n".join(report_lines)
     
     if len(report_content) > 4000:
-        file_content = "\n".join([f"{user['username']} - {user['expire_dt'].strftime('%Y-%m-%d %H:%M:%S')}" for user in expiring_users])
+        # *** MODIFICATION START ***
+        file_lines = []
+        for user in expiring_users:
+            local_dt = user['expire_dt'].astimezone(target_tz)
+            line = f"{user['username']} - {local_dt.strftime('%Y-%m-%d %H:%M:%S')}"
+            file_lines.append(line)
+        file_content = "\n".join(file_lines)
+        # *** MODIFICATION END ***
         report_file = io.BytesIO(file_content.encode('utf-8'))
         await context.bot.send_document(
             chat_id=query.effective_chat.id,
