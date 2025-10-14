@@ -28,7 +28,6 @@ except json.JSONDecodeError: logger.critical("locales.json is not a valid JSON f
 COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("start", "نمایش منوی اصلی")], 'ru': [BotCommand("start", "Показать главное меню")]}
 
 # STATE CONSTANTS
-# === CHANGE START ===
 (
     MAIN_MENU, SELECTING_LANGUAGE, AWAITING_USERNAME, USER_MENU, AWAITING_LIMIT,
     AWAITING_EXPIRE, NODE_LIST, VIEWING_LOGS, QR_VIEW, SELECT_NODE_RESTART,
@@ -36,9 +35,8 @@ COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("st
     SELECTING_HWID_OPTION, AWAITING_HWID_VALUE, SELECTING_SQUADS, EDIT_ALL_USERS_MENU,
     AWAITING_BULK_VALUE, CONFIRM_BULK_ACTION, AWAITING_HOURS_FOR_UPDATED_LIST,
     SELECT_BULK_HWID_ACTION, AWAITING_BULK_HWID_VALUE, AWAITING_TIMEZONE_SETTING,
-    EXPIRING_USERS_MENU, AWAITING_HWID_EDIT 
-) = range(26) # Incremented range to 26
-# === CHANGE END ===
+    EXPIRING_USERS_MENU, AWAITING_HWID_EDIT
+) = range(26)
 
 
 def get_settings() -> dict:
@@ -179,7 +177,6 @@ def generate_qr_code(data: str):
     img.save(buf, 'PNG'); buf.seek(0)
     return buf.getvalue()
 
-# === CHANGE START ===
 def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE):
     safe_username = html.escape(user_data.get('username') or 'N/A')
     safe_client_app = html.escape(user_data.get('subLastUserAgent') or t('unknown', context))
@@ -228,7 +225,6 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
             f"{t('last_update', context)} {last_update_relative}\n\n"
             f"{t('subscription_link', context)}\n"
             f"<code>{safe_sub_url}</code>")
-# === CHANGE END ===
 
 def get_logs_from_node(node_name: str):
     node_config = config.NODES.get(node_name)
@@ -988,6 +984,7 @@ async def set_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await context.bot.delete_my_commands(); await context.bot.set_my_commands(COMMANDS.get(lang_code, COMMANDS['en']))
     return await start(update, context)
 
+# === CHANGE START ===
 async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     username_to_fetch = context.user_data.get('username')
     if update.message and not username_to_fetch:
@@ -1012,29 +1009,40 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_data = data.get('response', {});
     context.user_data['user_data'] = user_data; context.user_data['user_uuid'] = user_data.get('uuid')
     message_text = build_user_info_message(user_data, context)
-    action_buttons = [InlineKeyboardButton(t('reset_usage_btn', context), callback_data='reset_usage')]
-    if user_data.get('status') == 'ACTIVE': action_buttons.append(InlineKeyboardButton(t('disable_user_btn', context), callback_data='disable_user'))
-    else: action_buttons.append(InlineKeyboardButton(t('enable_user_btn', context), callback_data='enable_user'))
+
+    enable_disable_button = InlineKeyboardButton(t('disable_user_btn', context), callback_data='disable_user') \
+        if user_data.get('status') == 'ACTIVE' \
+        else InlineKeyboardButton(t('enable_user_btn', context), callback_data='enable_user')
     
-    # === CHANGE START ===
     keyboard_list = [
         [
             InlineKeyboardButton(t('edit_volume_btn', context), callback_data='edit_limit'),
-            InlineKeyboardButton(t('edit_date_btn', context), callback_data='edit_expire'),
-            InlineKeyboardButton(t('edit_hwid_btn', context), callback_data='edit_hwid')
+            InlineKeyboardButton(t('edit_date_btn', context), callback_data='edit_expire')
         ],
-        action_buttons,
-        [InlineKeyboardButton(t('show_qr_btn', context), callback_data='show_qr'), InlineKeyboardButton(t('get_happ_qr_btn', context), callback_data='get_happ_qr')],
-        [InlineKeyboardButton(t('delete_user_btn', context), callback_data='delete_user')],
-        [InlineKeyboardButton(t('refresh_btn', context), callback_data='refresh')],
-        [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]
+        [
+            InlineKeyboardButton(t('edit_hwid_btn', context), callback_data='edit_hwid'),
+            InlineKeyboardButton(t('reset_usage_btn', context), callback_data='reset_usage')
+        ],
+        [
+            enable_disable_button,
+            InlineKeyboardButton(t('refresh_btn', context), callback_data='refresh')
+        ],
+        [
+            InlineKeyboardButton(t('show_qr_btn', context), callback_data='show_qr'),
+            InlineKeyboardButton(t('get_happ_qr_btn', context), callback_data='get_happ_qr')
+        ],
+        [
+            InlineKeyboardButton(t('delete_user_btn', context), callback_data='delete_user')
+        ],
+        [
+            InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')
+        ]
     ]
-    # === CHANGE END ===
     
     await sent_message.edit_text(text=message_text, reply_markup=InlineKeyboardMarkup(keyboard_list), parse_mode=ParseMode.HTML)
     return USER_MENU
+# === CHANGE END ===
 
-# === CHANGE START ===
 async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer(); action = query.data
     
@@ -1112,7 +1120,6 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return USER_MENU
         
     return USER_MENU
-# === CHANGE END ===
 
 async def delete_user_confirmation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer()
@@ -1146,7 +1153,6 @@ async def back_to_user_info_handler(update: Update, context: ContextTypes.DEFAUL
     await query.message.delete()
     return await show_user_card(update, context)
 
-# === CHANGE START ===
 async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         await update.message.delete()
@@ -1163,7 +1169,7 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if not user_uuid: return await start(update, context)
     
     payload = {'uuid': user_uuid}
-    current_state = AWAITING_LIMIT # Default fallback state
+    current_state = AWAITING_LIMIT
 
     try:
         editing_type = context.user_data.get('editing')
@@ -1206,7 +1212,6 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         context.job_queue.run_once(lambda j: j.context.delete(), 5, context=msg)
     
     return await show_user_card(update, context)
-# === CHANGE END ===
 
 
 async def logs_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1283,7 +1288,7 @@ async def expiring_users_handler(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     await query.answer()
     
-    days_offset = int(query.data.split('_')[1]) # 0 for today, 1 for tomorrow, 2 for day after
+    days_offset = int(query.data.split('_')[1])
     
     await query.message.edit_text(text=t('fetching_expiring_users', context))
     
@@ -1369,7 +1374,6 @@ async def expiring_users_handler(update: Update, context: ContextTypes.DEFAULT_T
 def main() -> None:
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     
-    # === CHANGE START ===
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('start', start),
@@ -1419,7 +1423,6 @@ def main() -> None:
         ], 
         allow_reentry=True
     )
-    # === CHANGE END ===
     
     application.add_handler(conv_handler)
     
