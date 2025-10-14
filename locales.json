@@ -1,5 +1,10 @@
 {
   "fa": {
+    "hwid_limit": "⚙️ <b>محدودیت دستگاه (HWID):</b>",
+    "hwid_limit_value": "{limit} دستگاه",
+    "disabled": "غیرفعال",
+    "edit_hwid_btn": "⚙️ ویرایش HWID",
+    "ask_for_new_hwid_limit": "لطفا محدودیت جدید دستگاه (HWID) را برای کاربر <code>{username}</code> وارد کنید.\n(برای غیرفعال کردن عدد 0 را وارد کنید)",
     "expiring_users_btn": "⏳ کاربران در شرف انقضا",
     "expiring_users_prompt": "لطفا بازه زمانی مورد نظر را برای مشاهده کاربران در شرف انقضا انتخاب کنید:",
     "expiring_today_btn": "امروز",
@@ -145,6 +150,11 @@
     "change_type_hwid": "محدودیت HWID"
   },
   "en": {
+    "hwid_limit": "⚙️ <b>HWID Limit:</b>",
+    "hwid_limit_value": "{limit} devices",
+    "disabled": "Disabled",
+    "edit_hwid_btn": "⚙️ Edit HWID",
+    "ask_for_new_hwid_limit": "Please enter the new device limit (HWID) for user <code>{username}</code>.\n(Enter 0 to disable)",
     "expiring_users_btn": "⏳ Expiring Users",
     "expiring_users_prompt": "Please select a time range to view users who are about to expire:",
     "expiring_today_btn": "Today",
@@ -290,6 +300,11 @@
     "change_type_hwid": "HWID Limit"
   },
   "ru": {
+    "hwid_limit": "⚙️ <b>Лимит HWID:</b>",
+    "hwid_limit_value": "{limit} устройств",
+    "disabled": "Отключено",
+    "edit_hwid_btn": "⚙️ Изменить HWID",
+    "ask_for_new_hwid_limit": "Введите новый лимит устройств (HWID) для пользователя <code>{username}</code>.\n(Введите 0 для отключения)",
     "expiring_users_btn": "⏳ Истекающие пользователи",
     "expiring_users_prompt": "Выберите временной диапазон для просмотра пользователей, срок действия которых скоро истечет:",
     "expiring_today_btn": "Сегодня",
