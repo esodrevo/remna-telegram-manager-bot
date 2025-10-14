@@ -1238,21 +1238,27 @@ async def expiring_users_handler(update: Update, context: ContextTypes.DEFAULT_T
     
     now_utc = datetime.now(timezone.utc)
     
-    if days_offset == 0: # Today
-        start_range = now_utc
-        end_range = now_utc.replace(hour=23, minute=59, second=59, microsecond=999999)
-    else: # Tomorrow or Day after
-        target_day_start = (now_utc + timedelta(days=days_offset)).replace(hour=0, minute=0, second=0, microsecond=0)
-        start_range = target_day_start
-        end_range = target_day_start.replace(hour=23, minute=59, second=59, microsecond=999999)
+    # *** MODIFICATION START: Use the whole calendar day for the range ***
+    target_day_start = (now_utc + timedelta(days=days_offset)).replace(hour=0, minute=0, second=0, microsecond=0)
+    start_range = target_day_start
+    end_range = target_day_start.replace(hour=23, minute=59, second=59, microsecond=999999)
+    # *** MODIFICATION END ***
 
     expiring_users = []
     for user in all_users_list:
+        expire_dt = None
         expire_at_str = user.get('expireAt')
-        if not expire_at_str:
-            continue
         
-        expire_dt = parse_iso_date(expire_at_str)
+        if expire_at_str:
+            expire_dt = parse_iso_date(expire_at_str)
+        else:
+            expire_duration = user.get('expire')
+            created_at_str = user.get('createdAt')
+            if expire_duration and expire_duration > 0 and created_at_str:
+                created_dt = parse_iso_date(created_at_str)
+                if created_dt:
+                    expire_dt = created_dt + timedelta(seconds=expire_duration)
+
         if expire_dt and start_range <= expire_dt <= end_range:
             expiring_users.append({
                 'username': user.get('username', 'N/A'),
@@ -1268,30 +1274,24 @@ async def expiring_users_handler(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.edit_text(t('no_expiring_users_found', context), reply_markup=reply_markup_back)
         return EXPIRING_USERS_MENU
 
-    # *** MODIFICATION START ***
     target_tz_info = parse_timezone_setting()
     target_tz = target_tz_info[0] if target_tz_info else timezone.utc
-    # *** MODIFICATION END ***
 
     report_lines = [t('expiring_users_report_title', context, period=period_text)]
     for user in expiring_users:
-        # *** MODIFICATION START ***
         local_expire_dt = user['expire_dt'].astimezone(target_tz)
         expire_str = local_expire_dt.strftime('%Y-%m-%d %H:%M')
-        # *** MODIFICATION END ***
         report_lines.append(f"👤 `{user['username']}` - ⏳ {expire_str}")
         
     report_content = "\n".join(report_lines)
     
     if len(report_content) > 4000:
-        # *** MODIFICATION START ***
         file_lines = []
         for user in expiring_users:
             local_dt = user['expire_dt'].astimezone(target_tz)
             line = f"{user['username']} - {local_dt.strftime('%Y-%m-%d %H:%M:%S')}"
             file_lines.append(line)
         file_content = "\n".join(file_lines)
-        # *** MODIFICATION END ***
         report_file = io.BytesIO(file_content.encode('utf-8'))
         await context.bot.send_document(
             chat_id=query.effective_chat.id,
