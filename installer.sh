@@ -299,7 +299,7 @@ EOF
     curl -sL "${RAW_GITHUB_URL}/send_file.py" -o "$INSTALL_DIR/send_file.py"
     
     cat << 'EOF' > "$INSTALL_DIR/settings.json"
-{"language": "fa"}
+{"language": "en"}
 EOF
 
     if [ ! -f "$BOT_SERVICE_FILE" ]; then
