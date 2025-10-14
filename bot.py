@@ -118,10 +118,12 @@ def human_readable_timediff(dt: datetime, context: ContextTypes.DEFAULT_TYPE):
     days = int(hours/24)
     return t('days_ago', context, days=days)
 
-def api_request(method: str, endpoint: str, payload: dict = None):
+# === CHANGE START ===
+# The api_request function is modified to accept 'params' for pagination.
+def api_request(method: str, endpoint: str, payload: dict = None, params: dict = None):
     url = f"{config.PANEL_URL}{endpoint}"; headers = {'Authorization': f'Bearer {config.PANEL_API_TOKEN}', 'Accept': 'application/json', 'Content-Type': 'application/json'}
     try:
-        response = requests.request(method.upper(), url, headers=headers, json=payload, timeout=15)
+        response = requests.request(method.upper(), url, headers=headers, json=payload, params=params, timeout=15)
         response.raise_for_status()
         return response.json() if response.status_code != 204 else {}, None
     except requests.exceptions.HTTPError as errh:
@@ -135,6 +137,41 @@ def api_request(method: str, endpoint: str, payload: dict = None):
         logger.error(f"Http Error: {errh} - Response: {error_details}"); return None, f"HTTP Error {errh.response.status_code}: {error_details}"
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}"); return None, "Unknown error"
+
+# This new function handles pagination to get ALL users.
+async def api_request_get_all_users():
+    """
+    Fetches all users from the API by handling pagination.
+    """
+    all_users = []
+    offset = 0
+    limit = 100  # Fetch 100 users per page
+    
+    while True:
+        params = {'offset': offset, 'limit': limit}
+        data, error = await asyncio.to_thread(api_request, 'GET', '/api/users', params=params)
+        
+        if error:
+            logger.error(f"Error fetching users with offset {offset}: {error}")
+            return None, error
+            
+        if not data or 'response' not in data or not data['response'].get('users'):
+            # No more users to fetch
+            break
+            
+        users_on_page = data['response']['users']
+        all_users.extend(users_on_page)
+        
+        if len(users_on_page) < limit:
+            # This was the last page
+            break
+            
+        offset += limit
+        
+    # The API might return users in a different structure, so we build the final dict correctly.
+    final_response_structure = {'response': {'users': all_users}}
+    return final_response_structure, None
+# === CHANGE END ===
 
 
 def generate_qr_code(data: str):
@@ -271,6 +308,7 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.message.edit_text(text="⏳ در حال دریافت آخرین کاربر...")
         
         last_username = "N/A"
+        # We only need the latest user, so fetching just one page is fine here.
         users_data, error = await asyncio.to_thread(api_request, 'GET', '/api/users')
         
         if not error and users_data and 'response' in users_data:
@@ -374,7 +412,9 @@ async def show_bulk_confirmation(update: Update, context: ContextTypes.DEFAULT_T
     
     await context.bot.edit_message_text(chat_id=chat_id, message_id=prompt_message_id, text=t('fetching_all_users', context))
 
-    users_data, error = await asyncio.to_thread(api_request, 'GET', '/api/users')
+    # === CHANGE ===
+    # Using the new function to get ALL users
+    users_data, error = await api_request_get_all_users()
 
     if error or 'response' not in users_data or 'users' not in users_data['response']:
         await context.bot.edit_message_text(chat_id=chat_id, message_id=prompt_message_id, text=t('error_fetching_all_users', context, error=error))
@@ -597,7 +637,9 @@ async def process_hours_and_fetch_users(update: Update, context: ContextTypes.DE
         
     wait_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('fetching_updated_users', context))
 
-    all_users_response, error = await asyncio.to_thread(api_request, 'GET', '/api/users')
+    # === CHANGE ===
+    # Using the new function to get ALL users
+    all_users_response, error = await api_request_get_all_users()
     
     if error:
         await wait_message.edit_text(t('error_fetching_all_users', context, error=error))
@@ -1222,7 +1264,9 @@ async def expiring_users_handler(update: Update, context: ContextTypes.DEFAULT_T
     
     await query.message.edit_text(text=t('fetching_expiring_users', context))
     
-    all_users_response, error = await asyncio.to_thread(api_request, 'GET', '/api/users')
+    # === CHANGE ===
+    # Using the new function to get ALL users
+    all_users_response, error = await api_request_get_all_users()
     
     keyboard_back = [[InlineKeyboardButton(t('back_btn', context), callback_data='go_expiring_users')]]
     reply_markup_back = InlineKeyboardMarkup(keyboard_back)
