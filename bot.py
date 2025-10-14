@@ -1218,12 +1218,28 @@ async def expiring_users_handler(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     await query.answer()
     
-    days_offset = int(query.data.split('_')[1]) # 0 for today, 1 for tomorrow, 2 for day after
+    days_offset = int(query.data.split('_')[1])
     
     await query.message.edit_text(text=t('fetching_expiring_users', context))
     
-    all_users_response, error = await asyncio.to_thread(api_request, 'GET', '/api/users')
-    
+    # *** MODIFICATION START: Handle API Pagination ***
+    all_users_list = []
+    page = 1
+    error = None
+    while True:
+        paginated_response, api_error = await asyncio.to_thread(api_request, 'GET', f'/api/users?page={page}')
+        if api_error:
+            error = api_error
+            break
+        
+        users_on_page = paginated_response.get('response', {}).get('users', [])
+        if not users_on_page:
+            break
+        
+        all_users_list.extend(users_on_page)
+        page += 1
+    # *** MODIFICATION END ***
+
     keyboard_back = [[InlineKeyboardButton(t('back_btn', context), callback_data='go_expiring_users')]]
     reply_markup_back = InlineKeyboardMarkup(keyboard_back)
 
@@ -1234,15 +1250,11 @@ async def expiring_users_handler(update: Update, context: ContextTypes.DEFAULT_T
         )
         return EXPIRING_USERS_MENU
 
-    all_users_list = all_users_response.get('response', {}).get('users', [])
-    
     now_utc = datetime.now(timezone.utc)
     
-    # *** MODIFICATION START: Use the whole calendar day for the range ***
     target_day_start = (now_utc + timedelta(days=days_offset)).replace(hour=0, minute=0, second=0, microsecond=0)
     start_range = target_day_start
     end_range = target_day_start.replace(hour=23, minute=59, second=59, microsecond=999999)
-    # *** MODIFICATION END ***
 
     expiring_users = []
     for user in all_users_list:
