@@ -28,6 +28,7 @@ except json.JSONDecodeError: logger.critical("locales.json is not a valid JSON f
 COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("start", "نمایش منوی اصلی")], 'ru': [BotCommand("start", "Показать главное меню")]}
 
 # STATE CONSTANTS
+# === CHANGE START ===
 (
     MAIN_MENU, SELECTING_LANGUAGE, AWAITING_USERNAME, USER_MENU, AWAITING_LIMIT,
     AWAITING_EXPIRE, NODE_LIST, VIEWING_LOGS, QR_VIEW, SELECT_NODE_RESTART,
@@ -35,8 +36,9 @@ COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("st
     SELECTING_HWID_OPTION, AWAITING_HWID_VALUE, SELECTING_SQUADS, EDIT_ALL_USERS_MENU,
     AWAITING_BULK_VALUE, CONFIRM_BULK_ACTION, AWAITING_HOURS_FOR_UPDATED_LIST,
     SELECT_BULK_HWID_ACTION, AWAITING_BULK_HWID_VALUE, AWAITING_TIMEZONE_SETTING,
-    EXPIRING_USERS_MENU
-) = range(25)
+    EXPIRING_USERS_MENU, AWAITING_HWID_EDIT 
+) = range(26) # Incremented range to 26
+# === CHANGE END ===
 
 
 def get_settings() -> dict:
@@ -136,18 +138,15 @@ def api_request(method: str, endpoint: str, payload: dict = None, params: dict =
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}"); return None, "Unknown error"
 
-# === CHANGE START ===
-# This function is now corrected based on the provided API documentation.
 async def api_request_get_all_users():
     """
     Fetches all users from the API by handling pagination using 'size' and 'start' parameters.
     """
     all_users = []
     start = 0
-    size = 100  # Fetch 100 users per page, a reasonable number to avoid too many requests.
+    size = 100
     
     while True:
-        # Correct parameters based on the documentation: 'start' and 'size'
         params = {'start': start, 'size': size}
         data, error = await asyncio.to_thread(api_request, 'GET', '/api/users', params=params)
         
@@ -159,12 +158,10 @@ async def api_request_get_all_users():
         users_on_page = response_data.get('users', [])
         
         if not users_on_page:
-            # No more users to fetch, exit the loop.
             break
             
         all_users.extend(users_on_page)
         
-        # If the number of users returned is less than the page size, it means this is the last page.
         if len(users_on_page) < size:
             break
             
@@ -172,7 +169,6 @@ async def api_request_get_all_users():
         
     final_response_structure = {'response': {'users': all_users}}
     return final_response_structure, None
-# === CHANGE END ===
 
 
 def generate_qr_code(data: str):
@@ -183,6 +179,7 @@ def generate_qr_code(data: str):
     img.save(buf, 'PNG'); buf.seek(0)
     return buf.getvalue()
 
+# === CHANGE START ===
 def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE):
     safe_username = html.escape(user_data.get('username') or 'N/A')
     safe_client_app = html.escape(user_data.get('subLastUserAgent') or t('unknown', context))
@@ -213,9 +210,15 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
         else: remaining_days = t('expired', context)
     sub_last_update_dt = parse_iso_date(user_data.get('subLastOpenedAt'))
     last_update_relative = human_readable_timediff(sub_last_update_dt, context)
+
+    hwid_limit = user_data.get('hwidDeviceLimit', 0)
+    hwid_status_text = t('disabled', context)
+    if hwid_limit and hwid_limit > 0:
+        hwid_status_text = t('hwid_limit_value', context, limit=hwid_limit)
     
     return (f"{t('user_info_title', context, username=safe_username)}\n\n"
-            f"{t('status', context)} {status}\n\n"
+            f"{t('status', context)} {status}\n"
+            f"{t('hwid_limit', context)} {hwid_status_text}\n\n"
             f"{t('total_limit', context)} {limit_formatted}\n"
             f"{t('usage', context)} {usage_formatted}\n"
             f"{t('remaining_volume', context)} {remaining_formatted}\n\n"
@@ -225,6 +228,7 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
             f"{t('last_update', context)} {last_update_relative}\n\n"
             f"{t('subscription_link', context)}\n"
             f"<code>{safe_sub_url}</code>")
+# === CHANGE END ===
 
 def get_logs_from_node(node_name: str):
     node_config = config.NODES.get(node_name)
@@ -309,7 +313,6 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.message.edit_text(text="⏳ در حال دریافت آخرین کاربر...")
         
         last_username = "N/A"
-        # For finding the last user, fetching one page is efficient and sufficient.
         users_data, error = await asyncio.to_thread(api_request, 'GET', '/api/users')
         
         if not error and users_data and 'response' in users_data:
@@ -319,7 +322,6 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 
                 if users_list and isinstance(users_list, list):
                     try:
-                        # Sort by creation date to find the most recent user
                         sorted_users = sorted(users_list, key=get_creation_date, reverse=True)
                         
                         if sorted_users:
@@ -414,7 +416,6 @@ async def show_bulk_confirmation(update: Update, context: ContextTypes.DEFAULT_T
     
     await context.bot.edit_message_text(chat_id=chat_id, message_id=prompt_message_id, text=t('fetching_all_users', context))
 
-    # Using the corrected function to get ALL users
     users_data, error = await api_request_get_all_users()
 
     if error or 'response' not in users_data or 'users' not in users_data['response']:
@@ -638,7 +639,6 @@ async def process_hours_and_fetch_users(update: Update, context: ContextTypes.DE
         
     wait_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('fetching_updated_users', context))
 
-    # Using the corrected function to get ALL users
     all_users_response, error = await api_request_get_all_users()
     
     if error:
@@ -1015,17 +1015,26 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     action_buttons = [InlineKeyboardButton(t('reset_usage_btn', context), callback_data='reset_usage')]
     if user_data.get('status') == 'ACTIVE': action_buttons.append(InlineKeyboardButton(t('disable_user_btn', context), callback_data='disable_user'))
     else: action_buttons.append(InlineKeyboardButton(t('enable_user_btn', context), callback_data='enable_user'))
+    
+    # === CHANGE START ===
     keyboard_list = [
-        [InlineKeyboardButton(t('edit_volume_btn', context), callback_data='edit_limit'), InlineKeyboardButton(t('edit_date_btn', context), callback_data='edit_expire')],
+        [
+            InlineKeyboardButton(t('edit_volume_btn', context), callback_data='edit_limit'),
+            InlineKeyboardButton(t('edit_date_btn', context), callback_data='edit_expire'),
+            InlineKeyboardButton(t('edit_hwid_btn', context), callback_data='edit_hwid')
+        ],
         action_buttons,
         [InlineKeyboardButton(t('show_qr_btn', context), callback_data='show_qr'), InlineKeyboardButton(t('get_happ_qr_btn', context), callback_data='get_happ_qr')],
         [InlineKeyboardButton(t('delete_user_btn', context), callback_data='delete_user')],
         [InlineKeyboardButton(t('refresh_btn', context), callback_data='refresh')],
         [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]
     ]
+    # === CHANGE END ===
+    
     await sent_message.edit_text(text=message_text, reply_markup=InlineKeyboardMarkup(keyboard_list), parse_mode=ParseMode.HTML)
     return USER_MENU
 
+# === CHANGE START ===
 async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer(); action = query.data
     
@@ -1039,6 +1048,11 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         context.user_data['edit_prompt_message_id'] = prompt_message.message_id
         context.user_data['editing'] = 'expire'
         return AWAITING_EXPIRE
+    elif action == 'edit_hwid':
+        prompt_message = await query.message.edit_text(text=t('ask_for_new_hwid_limit', context, username=html.escape(context.user_data.get('username', ''))), parse_mode=ParseMode.HTML)
+        context.user_data['edit_prompt_message_id'] = prompt_message.message_id
+        context.user_data['editing'] = 'hwid'
+        return AWAITING_HWID_EDIT
     
     if action == 'refresh':
         await query.message.delete(); return await show_user_card(update, context)
@@ -1098,6 +1112,7 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return USER_MENU
         
     return USER_MENU
+# === CHANGE END ===
 
 async def delete_user_confirmation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer()
@@ -1131,6 +1146,7 @@ async def back_to_user_info_handler(update: Update, context: ContextTypes.DEFAUL
     await query.message.delete()
     return await show_user_card(update, context)
 
+# === CHANGE START ===
 async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         await update.message.delete()
@@ -1147,11 +1163,15 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if not user_uuid: return await start(update, context)
     
     payload = {'uuid': user_uuid}
+    current_state = AWAITING_LIMIT # Default fallback state
 
     try:
-        if context.user_data.get('editing') == 'limit':
-            new_limit_gb = float(update.message.text); payload["trafficLimitBytes"] = int(new_limit_gb * 1024**3)
-        elif context.user_data.get('editing') == 'expire':
+        editing_type = context.user_data.get('editing')
+        if editing_type == 'limit':
+            new_limit_gb = float(update.message.text)
+            payload["trafficLimitBytes"] = int(new_limit_gb * 1024**3)
+            current_state = AWAITING_LIMIT
+        elif editing_type == 'expire':
             days = int(update.message.text)
             expire_time_setting = parse_timezone_setting()
             if expire_time_setting:
@@ -1163,15 +1183,21 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 )
                 new_expire_datetime_utc = new_expire_datetime_local.astimezone(timezone.utc)
             else:
-                # Fallback to original behavior
                 new_expire_datetime_utc = datetime.now(timezone.utc) + timedelta(days=days)
                 new_expire_datetime_utc = new_expire_datetime_utc.replace(hour=18, minute=30, second=0, microsecond=0)
 
             payload["expireAt"] = new_expire_datetime_utc.isoformat().replace('+00:00', 'Z')
+            current_state = AWAITING_EXPIRE
+        elif editing_type == 'hwid':
+            new_hwid_limit = int(update.message.text)
+            if new_hwid_limit < 0: raise ValueError
+            payload["hwidDeviceLimit"] = new_hwid_limit
+            current_state = AWAITING_HWID_EDIT
+
     except (ValueError, TypeError):
         msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('invalid_number', context))
         context.job_queue.run_once(lambda j: j.context.delete(), 5, context=msg)
-        return AWAITING_LIMIT
+        return current_state
 
     _, error = await asyncio.to_thread(api_request, 'PATCH', '/api/users', payload=payload)
     
@@ -1180,6 +1206,7 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         context.job_queue.run_once(lambda j: j.context.delete(), 5, context=msg)
     
     return await show_user_card(update, context)
+# === CHANGE END ===
 
 
 async def logs_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1260,7 +1287,6 @@ async def expiring_users_handler(update: Update, context: ContextTypes.DEFAULT_T
     
     await query.message.edit_text(text=t('fetching_expiring_users', context))
     
-    # Using the corrected function to get ALL users
     all_users_response, error = await api_request_get_all_users()
     
     keyboard_back = [[InlineKeyboardButton(t('back_btn', context), callback_data='go_expiring_users')]]
@@ -1343,6 +1369,7 @@ async def expiring_users_handler(update: Update, context: ContextTypes.DEFAULT_T
 def main() -> None:
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     
+    # === CHANGE START ===
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('start', start),
@@ -1356,6 +1383,7 @@ def main() -> None:
             QR_VIEW: [CallbackQueryHandler(back_to_user_info_handler, pattern='^back_to_user_info$')],
             AWAITING_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
             AWAITING_EXPIRE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
+            AWAITING_HWID_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
             NODE_LIST: [CallbackQueryHandler(logs_node_handler, pattern='^lognode_')],
             VIEWING_LOGS: [
                 CallbackQueryHandler(logs_node_handler, pattern='^lognode_'),
@@ -1391,6 +1419,7 @@ def main() -> None:
         ], 
         allow_reentry=True
     )
+    # === CHANGE END ===
     
     application.add_handler(conv_handler)
     
