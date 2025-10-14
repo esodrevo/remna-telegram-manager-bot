@@ -1225,18 +1225,28 @@ async def expiring_users_handler(update: Update, context: ContextTypes.DEFAULT_T
     # *** MODIFICATION START: Handle API Pagination ***
     all_users_list = []
     page = 1
+    PAGE_SIZE = 100  # Fetch 100 users per request for efficiency
     error = None
     while True:
-        paginated_response, api_error = await asyncio.to_thread(api_request, 'GET', f'/api/users?page={page}')
+        endpoint = f'/api/users?page={page}&limit={PAGE_SIZE}'
+        paginated_response, api_error = await asyncio.to_thread(api_request, 'GET', endpoint)
+        
         if api_error:
             error = api_error
             break
         
         users_on_page = paginated_response.get('response', {}).get('users', [])
+        
         if not users_on_page:
+            # This is the primary break condition (empty page)
             break
         
         all_users_list.extend(users_on_page)
+        
+        if len(users_on_page) < PAGE_SIZE:
+            # If we received fewer users than requested, it's the last page
+            break
+            
         page += 1
     # *** MODIFICATION END ***
 
