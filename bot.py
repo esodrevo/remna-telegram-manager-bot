@@ -118,10 +118,10 @@ def human_readable_timediff(dt: datetime, context: ContextTypes.DEFAULT_TYPE):
     days = int(hours/24)
     return t('days_ago', context, days=days)
 
-def api_request(method: str, endpoint: str, payload: dict = None, params: dict = None):
+def api_request(method: str, endpoint: str, payload: dict = None):
     url = f"{config.PANEL_URL}{endpoint}"; headers = {'Authorization': f'Bearer {config.PANEL_API_TOKEN}', 'Accept': 'application/json', 'Content-Type': 'application/json'}
     try:
-        response = requests.request(method.upper(), url, headers=headers, json=payload, params=params, timeout=20)
+        response = requests.request(method.upper(), url, headers=headers, json=payload, timeout=15)
         response.raise_for_status()
         return response.json() if response.status_code != 204 else {}, None
     except requests.exceptions.HTTPError as errh:
@@ -135,38 +135,6 @@ def api_request(method: str, endpoint: str, payload: dict = None, params: dict =
         logger.error(f"Http Error: {errh} - Response: {error_details}"); return None, f"HTTP Error {errh.response.status_code}: {error_details}"
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}"); return None, "Unknown error"
-
-# === START OF FINAL FIX for PAGINATION ===
-# This rewritten function reliably fetches all users from all pages.
-async def fetch_all_users_paginated(context: ContextTypes.DEFAULT_TYPE) -> (list | None, str | None):
-    all_users = []
-    page = 1
-    page_size = 100  # Fetch 100 users per API call
-
-    while True:
-        params = {'page': page, 'size': page_size}
-        data, error = await asyncio.to_thread(api_request, 'GET', '/api/users', params=params)
-
-        if error:
-            logger.error(f"Failed to fetch page {page} of users: {error}")
-            # If even the first page fails, return the error. Otherwise, return the data collected so far.
-            return None if page == 1 else all_users, error
-
-        if not data or 'response' not in data or 'users' not in data['response']:
-            logger.warning(f"Unexpected API response on page {page}. Stopping user fetch.")
-            break
-
-        users_on_page = data['response'].get('users', [])
-        if not users_on_page:
-            # No more users on this page, we're done.
-            break
-        
-        all_users.extend(users_on_page)
-        page += 1
-    
-    logger.info(f"Successfully fetched a total of {len(all_users)} users.")
-    return all_users, None
-# === END OF FINAL FIX for PAGINATION ===
 
 
 def generate_qr_code(data: str):
@@ -303,15 +271,21 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.message.edit_text(text="⏳ در حال دریافت آخرین کاربر...")
         
         last_username = "N/A"
-        users_list, error = await fetch_all_users_paginated(context)
+        users_data, error = await asyncio.to_thread(api_request, 'GET', '/api/users')
         
-        if not error and users_list:
-            try:
-                sorted_users = sorted(users_list, key=get_creation_date, reverse=True)
-                if sorted_users:
-                    last_username = sorted_users[0].get('username', "N/A")
-            except Exception as e:
-                logger.error(f"Error processing users list: {e}")
+        if not error and users_data and 'response' in users_data:
+            response_obj = users_data.get('response')
+            if response_obj and isinstance(response_obj, dict):
+                users_list = response_obj.get('users')
+                
+                if users_list and isinstance(users_list, list):
+                    try:
+                        sorted_users = sorted(users_list, key=get_creation_date, reverse=True)
+                        
+                        if sorted_users:
+                            last_username = sorted_users[0].get('username', "N/A")
+                    except Exception as e:
+                        logger.error(f"Error processing users list: {e}")
 
         context.user_data['new_user_data'] = {}
         prompt_text = t('ask_for_new_username_with_suggestion', context, last_user=last_username)
@@ -400,12 +374,13 @@ async def show_bulk_confirmation(update: Update, context: ContextTypes.DEFAULT_T
     
     await context.bot.edit_message_text(chat_id=chat_id, message_id=prompt_message_id, text=t('fetching_all_users', context))
 
-    all_users, error = await fetch_all_users_paginated(context)
+    users_data, error = await asyncio.to_thread(api_request, 'GET', '/api/users')
 
-    if error:
+    if error or 'response' not in users_data or 'users' not in users_data['response']:
         await context.bot.edit_message_text(chat_id=chat_id, message_id=prompt_message_id, text=t('error_fetching_all_users', context, error=error))
         return ConversationHandler.END
         
+    all_users = users_data['response']['users']
     context.user_data['bulk_users_list'] = all_users
     
     edit_type = context.user_data['bulk_edit_type']
@@ -622,12 +597,13 @@ async def process_hours_and_fetch_users(update: Update, context: ContextTypes.DE
         
     wait_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('fetching_updated_users', context))
 
-    all_users_list, error = await fetch_all_users_paginated(context)
+    all_users_response, error = await asyncio.to_thread(api_request, 'GET', '/api/users')
     
-    if error or all_users_list is None:
+    if error:
         await wait_message.edit_text(t('error_fetching_all_users', context, error=error))
         return ConversationHandler.END
 
+    all_users_list = all_users_response.get('response', {}).get('users', [])
     now_utc = datetime.now(timezone.utc)
     time_threshold = now_utc - timedelta(hours=hours)
     
@@ -708,6 +684,7 @@ async def process_timezone_setting(update: Update, context: ContextTypes.DEFAULT
             parse_mode=ParseMode.HTML
         )
         context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 10)
+        # Resend the prompt
         settings = get_settings()
         current_setting = settings.get('expire_time_setting', t('not_set', context))
         keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
@@ -768,6 +745,7 @@ async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         days = int(update.message.text)
         if days < 0: raise ValueError
         
+        # *** MODIFICATION START ***
         expire_time_setting = parse_timezone_setting()
         if expire_time_setting:
             target_tz, target_time = expire_time_setting
@@ -778,8 +756,10 @@ async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             expire_datetime_utc = expire_datetime_local.astimezone(timezone.utc)
         else:
+            # Fallback to original behavior
             expire_datetime_utc = datetime.now(timezone.utc) + timedelta(days=days)
             expire_datetime_utc = expire_datetime_utc.replace(hour=18, minute=30, second=0, microsecond=0)
+        # *** MODIFICATION END ***
         
         context.user_data['new_user_data']['expireAt'] = expire_datetime_utc.isoformat().replace('+00:00', 'Z')
         
@@ -1132,6 +1112,7 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         if context.user_data.get('editing') == 'limit':
             new_limit_gb = float(update.message.text); payload["trafficLimitBytes"] = int(new_limit_gb * 1024**3)
         elif context.user_data.get('editing') == 'expire':
+            # *** MODIFICATION START ***
             days = int(update.message.text)
             expire_time_setting = parse_timezone_setting()
             if expire_time_setting:
@@ -1143,10 +1124,12 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 )
                 new_expire_datetime_utc = new_expire_datetime_local.astimezone(timezone.utc)
             else:
+                # Fallback to original behavior
                 new_expire_datetime_utc = datetime.now(timezone.utc) + timedelta(days=days)
                 new_expire_datetime_utc = new_expire_datetime_utc.replace(hour=18, minute=30, second=0, microsecond=0)
 
             payload["expireAt"] = new_expire_datetime_utc.isoformat().replace('+00:00', 'Z')
+            # *** MODIFICATION END ***
     except (ValueError, TypeError):
         msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('invalid_number', context))
         context.job_queue.run_once(lambda j: j.context.delete(), 5, context=msg)
@@ -1231,75 +1214,85 @@ async def show_expiring_users_menu(update: Update, context: ContextTypes.DEFAULT
     await query.message.edit_text(text=t('expiring_users_prompt', context), reply_markup=reply_markup)
     return EXPIRING_USERS_MENU
 
-# === START OF FINAL, SIMPLIFIED, and CORRECTED FUNCTION ===
 async def expiring_users_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-
-    days_offset = int(query.data.split('_')[1])
-
+    
+    days_offset = int(query.data.split('_')[1]) # 0 for today, 1 for tomorrow, 2 for day after
+    
     await query.message.edit_text(text=t('fetching_expiring_users', context))
-
-    all_users_list, error = await fetch_all_users_paginated(context)
-
+    
+    all_users_response, error = await asyncio.to_thread(api_request, 'GET', '/api/users')
+    
     keyboard_back = [[InlineKeyboardButton(t('back_btn', context), callback_data='go_expiring_users')]]
     reply_markup_back = InlineKeyboardMarkup(keyboard_back)
 
-    if error or all_users_list is None:
+    if error:
         await query.message.edit_text(
-            t('error_fetching_all_users', context, error=error or "Unknown error"),
+            t('error_fetching_all_users', context, error=error), 
             reply_markup=reply_markup_back
         )
         return EXPIRING_USERS_MENU
 
-    # 1. Determine the target timezone for display, defaulting to UTC if not set.
-    target_tz_info = parse_timezone_setting()
-    display_tz = target_tz_info[0] if target_tz_info else timezone.utc
-
-    # 2. Get the current date in the target timezone.
-    now_in_display_tz = datetime.now(timezone.utc).astimezone(display_tz)
-    target_date = (now_in_display_tz + timedelta(days=days_offset)).date()
+    all_users_list = all_users_response.get('response', {}).get('users', [])
+    
+    now_utc = datetime.now(timezone.utc)
+    
+    if days_offset == 0: # Today
+        start_range = now_utc
+        end_range = now_utc.replace(hour=23, minute=59, second=59, microsecond=999999)
+    else: # Tomorrow or Day after
+        target_day_start = (now_utc + timedelta(days=days_offset)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_range = target_day_start
+        end_range = target_day_start.replace(hour=23, minute=59, second=59, microsecond=999999)
 
     expiring_users = []
     for user in all_users_list:
-        expire_dt_utc = parse_iso_date(user.get('expireAt'))
-
-        if expire_dt_utc:
-            # 3. Convert each user's UTC expiration time to the target display timezone.
-            expire_dt_local = expire_dt_utc.astimezone(display_tz)
-
-            # 4. Compare just the date part (Year, Month, Day). This is the simplest and most robust way.
-            if expire_dt_local.date() == target_date:
-                expiring_users.append({
-                    'username': user.get('username', 'N/A'),
-                    'expire_dt': expire_dt_utc  # Store original UTC for sorting
-                })
-
+        expire_at_str = user.get('expireAt')
+        if not expire_at_str:
+            continue
+        
+        expire_dt = parse_iso_date(expire_at_str)
+        if expire_dt and start_range <= expire_dt <= end_range:
+            expiring_users.append({
+                'username': user.get('username', 'N/A'),
+                'expire_dt': expire_dt
+            })
+    
     expiring_users.sort(key=lambda x: x['expire_dt'])
-
+    
     period_key_map = {0: 'today', 1: 'tomorrow', 2: 'day_after_tomorrow'}
     period_text = t(f'period_{period_key_map[days_offset]}', context)
-
+    
     if not expiring_users:
         await query.message.edit_text(t('no_expiring_users_found', context), reply_markup=reply_markup_back)
         return EXPIRING_USERS_MENU
-        
+
+    # *** MODIFICATION START ***
+    target_tz_info = parse_timezone_setting()
+    target_tz = target_tz_info[0] if target_tz_info else timezone.utc
+    # *** MODIFICATION END ***
+
     report_lines = [t('expiring_users_report_title', context, period=period_text)]
     for user in expiring_users:
-        local_expire_dt = user['expire_dt'].astimezone(display_tz)
+        # *** MODIFICATION START ***
+        local_expire_dt = user['expire_dt'].astimezone(target_tz)
         expire_str = local_expire_dt.strftime('%Y-%m-%d %H:%M')
+        # *** MODIFICATION END ***
         report_lines.append(f"👤 `{user['username']}` - ⏳ {expire_str}")
-
+        
     report_content = "\n".join(report_lines)
-
+    
     if len(report_content) > 4000:
+        # *** MODIFICATION START ***
         file_lines = []
         for user in expiring_users:
-            local_dt = user['expire_dt'].astimezone(display_tz)
+            local_dt = user['expire_dt'].astimezone(target_tz)
             line = f"{user['username']} - {local_dt.strftime('%Y-%m-%d %H:%M:%S')}"
             file_lines.append(line)
-        file_content = "\n".join(file_lines).encode('utf-8')
-        report_file = io.BytesIO(file_content)
+        file_content = "\n".join(file_lines)
+        # *** MODIFICATION END ***
+        report_file = io.BytesIO(file_content.encode('utf-8'))
         await context.bot.send_document(
             chat_id=query.effective_chat.id,
             document=report_file,
@@ -1311,8 +1304,6 @@ async def expiring_users_handler(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.edit_text(report_content, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup_back)
 
     return EXPIRING_USERS_MENU
-# === END OF FINAL, SIMPLIFIED, and CORRECTED FUNCTION ===
-
 
 # --- End of Expiring Users Feature ---
 
