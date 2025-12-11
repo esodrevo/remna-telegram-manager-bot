@@ -182,6 +182,8 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
     safe_client_app = html.escape(user_data.get('subLastUserAgent') or t('unknown', context))
     safe_sub_url = html.escape(user_data.get('subscriptionUrl') or t('not_found', context))
     status = t('status_active', context) if user_data.get('status') == 'ACTIVE' else t('status_inactive', context)
+
+    data_limit = user_data.get('trafficLimitBytes')
     
     user_traffic = user_data.get('userTraffic') or {}
     data_usage = user_traffic.get('usedTrafficBytes', 0)
