@@ -183,8 +183,8 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
     safe_sub_url = html.escape(user_data.get('subscriptionUrl') or t('not_found', context))
     status = t('status_active', context) if user_data.get('status') == 'ACTIVE' else t('status_inactive', context)
     
-    data_limit = user_data.get('trafficLimitBytes')
-    data_usage = user_data.get('usedTrafficBytes', 0)
+    user_traffic = user_data.get('userTraffic') or {}
+    data_usage = user_traffic.get('usedTrafficBytes', 0)
 
     limit_formatted = format_bytes(data_limit)
     usage_formatted = "0.00 B"
