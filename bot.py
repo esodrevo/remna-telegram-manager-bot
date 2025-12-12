@@ -1087,6 +1087,7 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
         wait_msg = await query.message.reply_text("⏳ در حال تولید لینک Happ...")
         
+        # مرحله 1: دریافت لینک سابسکریپشن خام
         sub_data, sub_error = await asyncio.to_thread(api_request, 'GET', f'/api/subscriptions/by-username/{username}')
         
         if sub_error or not sub_data or 'response' not in sub_data:
@@ -1095,6 +1096,7 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await query.answer(text=f"خطا در دریافت اشتراک: {sub_error}", show_alert=True)
             return USER_MENU
 
+        # لینک معمولی (https://...)
         raw_sub_url = sub_data['response'].get('subscriptionUrl')
         
         if not raw_sub_url:
@@ -1103,6 +1105,8 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await query.answer(text="لینک اشتراک یافت نشد.", show_alert=True)
             return USER_MENU
 
+        # مرحله 2: تبدیل به لینک Happ (رمزنگاری)
+        # طبق مستندات: POST /api/system/tools/happ/encrypt
         encrypt_payload = {"linkToEncrypt": raw_sub_url}
         enc_data, enc_error = await asyncio.to_thread(api_request, 'POST', '/api/system/tools/happ/encrypt', payload=encrypt_payload)
         
@@ -1114,16 +1118,25 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if not enc_error and enc_data and 'response' in enc_data:
             final_happ_link = enc_data['response'].get('encryptedLink')
         
+        # فال‌بک: اگر رمزنگاری انجام نشد، همان لینک اصلی را بده
         if not final_happ_link:
             final_happ_link = raw_sub_url
 
+        # نمایش QR کد و لینک کامل
         if final_happ_link:
             qr_code_bytes = generate_qr_code(final_happ_link)
             if qr_code_bytes:
                 caption = t('happ_qr_caption', context, username=html.escape(username))
+                
+                # --- اصلاحیه: نمایش لینک کامل بدون کوتاه کردن ---
+                # تلگرام محدودیت 1024 کاراکتر برای کپشن عکس دارد.
+                # اگر لینک خیلی طولانی باشد، ممکن است ارور دهد، اما معمولاً لینک‌های Happ جا می‌شوند.
                 full_caption = f"{caption}\n<pre>{html.escape(final_happ_link)}</pre>"
                 
+                # بررسی محدودیت طول کپشن تلگرام (1024 کاراکتر)
                 if len(full_caption) > 1024:
+                    # اگر لینک خیلی خیلی طولانی بود و در کپشن جا نشد، آن را به عنوان یک پیام متنی جداگانه می‌فرستیم
+                    # اول عکس QR را با کپشن کوتاه بفرست
                     short_caption = f"{caption}\n(لینک طولانی است، آن را در پیام بعدی کپی کنید 👇)"
                     media = InputMediaPhoto(media=qr_code_bytes, caption=short_caption, parse_mode=ParseMode.HTML)
                     
@@ -1136,6 +1149,7 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                         await query.message.delete()
                         await context.bot.send_photo(chat_id=update.effective_chat.id, photo=qr_code_bytes, caption=short_caption, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
                     
+                    # سپس لینک کامل را به صورت متن بفرست تا کاربر بتواند کپی کند
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id, 
                         text=f"<pre>{html.escape(final_happ_link)}</pre>", 
@@ -1144,6 +1158,7 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                     return QR_VIEW
 
                 else:
+                    # حالت عادی: لینک در کپشن جا می‌شود
                     media = InputMediaPhoto(media=qr_code_bytes, caption=full_caption, parse_mode=ParseMode.HTML)
                     keyboard = [[InlineKeyboardButton(t('back_to_user_info_btn', context), callback_data='back_to_user_info')]]
                     
