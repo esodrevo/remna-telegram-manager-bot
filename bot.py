@@ -1079,65 +1079,83 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
         return CONFIRM_DELETE
     
-    if action == 'get_happ_qr':
+if action == 'get_happ_qr':
         username = context.user_data.get('username')
         if not username:
             await query.answer(text=t('not_found', context), show_alert=True)
             return USER_MENU
 
-        wait_msg = await query.message.reply_text("⏳ در حال جستجوی لینک Happ...")
+        wait_msg = await query.message.reply_text("⏳ در حال تولید لینک Happ...")
         
         sub_data, sub_error = await asyncio.to_thread(api_request, 'GET', f'/api/subscriptions/by-username/{username}')
+        
+        if sub_error or not sub_data or 'response' not in sub_data:
+            try: await wait_msg.delete()
+            except: pass
+            await query.answer(text=f"خطا در دریافت اشتراک: {sub_error}", show_alert=True)
+            return USER_MENU
+
+        raw_sub_url = sub_data['response'].get('subscriptionUrl')
+        
+        if not raw_sub_url:
+            try: await wait_msg.delete()
+            except: pass
+            await query.answer(text="لینک اشتراک یافت نشد.", show_alert=True)
+            return USER_MENU
+
+        encrypt_payload = {"linkToEncrypt": raw_sub_url}
+        enc_data, enc_error = await asyncio.to_thread(api_request, 'POST', '/api/system/tools/happ/encrypt', payload=encrypt_payload)
         
         try: await wait_msg.delete() 
         except: pass
 
-        if sub_error or not sub_data or 'response' not in sub_data:
-            await query.answer(text=f"Error: {sub_error}", show_alert=True)
-            return USER_MENU
+        final_happ_link = None
+        
+        if not enc_error and enc_data and 'response' in enc_data:
+            final_happ_link = enc_data['response'].get('encryptedLink')
+        
+        if not final_happ_link:
+            final_happ_link = raw_sub_url
 
-        response_obj = sub_data.get('response', {})
-        
-        found_happ_link = None
-        
-        links_list = response_obj.get('links', [])
-        for link in links_list:
-            if isinstance(link, str) and link.startswith('happ://'):
-                found_happ_link = link
-                break
-        
-        if not found_happ_link:
-            ss_conf = response_obj.get('ssConfLinks', {})
-            if ss_conf:
-                for key, value in ss_conf.items():
-                    if isinstance(value, str) and value.startswith('happ://'):
-                        found_happ_link = value
-                        break
-
-        if found_happ_link:
-            qr_code_bytes = generate_qr_code(found_happ_link)
+        if final_happ_link:
+            qr_code_bytes = generate_qr_code(final_happ_link)
             if qr_code_bytes:
                 caption = t('happ_qr_caption', context, username=html.escape(username))
-                # نمایش خلاصه لینک برای زیبایی
-                short_link_display = found_happ_link[:40] + "..." if len(found_happ_link) > 40 else found_happ_link
-                full_caption = f"{caption}\n<pre>{html.escape(found_happ_link)}</pre>"
+                full_caption = f"{caption}\n<pre>{html.escape(final_happ_link)}</pre>"
                 
                 if len(full_caption) > 1024:
-                     full_caption = f"{caption}\n(لینک طولانی است، از دکمه کپی استفاده کنید یا QR را اسکن کنید)"
+                    short_caption = f"{caption}\n(لینک طولانی است، آن را در پیام بعدی کپی کنید 👇)"
+                    media = InputMediaPhoto(media=qr_code_bytes, caption=short_caption, parse_mode=ParseMode.HTML)
+                    
+                    # دکمه بازگشت
+                    keyboard = [[InlineKeyboardButton(t('back_to_user_info_btn', context), callback_data='back_to_user_info')]]
+                    
+                    try:
+                        await query.message.edit_media(media=media, reply_markup=InlineKeyboardMarkup(keyboard))
+                    except BadRequest:
+                        await query.message.delete()
+                        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=qr_code_bytes, caption=short_caption, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+                    
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id, 
+                        text=f"<pre>{html.escape(final_happ_link)}</pre>", 
+                        parse_mode=ParseMode.HTML
+                    )
+                    return QR_VIEW
 
-                media = InputMediaPhoto(media=qr_code_bytes, caption=full_caption, parse_mode=ParseMode.HTML)
-                keyboard = [[InlineKeyboardButton(t('back_to_user_info_btn', context), callback_data='back_to_user_info')]]
-                
-                try:
-                    await query.message.edit_media(media=media, reply_markup=InlineKeyboardMarkup(keyboard))
-                except BadRequest:
-                    await query.message.delete()
-                    await context.bot.send_photo(chat_id=update.effective_chat.id, photo=qr_code_bytes, caption=full_caption, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
-                
-                return QR_VIEW
+                else:
+                    media = InputMediaPhoto(media=qr_code_bytes, caption=full_caption, parse_mode=ParseMode.HTML)
+                    keyboard = [[InlineKeyboardButton(t('back_to_user_info_btn', context), callback_data='back_to_user_info')]]
+                    
+                    try:
+                        await query.message.edit_media(media=media, reply_markup=InlineKeyboardMarkup(keyboard))
+                    except BadRequest:
+                        await query.message.delete()
+                        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=qr_code_bytes, caption=full_caption, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+                    
+                    return QR_VIEW
         else:
-            logger.warning(f"Happ link not found for {username}. API Response: {json.dumps(response_obj)}")
-            await query.answer(text="لینک Happ یافت نشد. (لطفا لاگ سرور را بررسی کنید)", show_alert=True)
+            await query.answer(text="خطا در تولید لینک.", show_alert=True)
             return USER_MENU
 
     if action in ['enable_user', 'disable_user', 'reset_usage']:
