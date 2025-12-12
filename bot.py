@@ -1079,7 +1079,7 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
         return CONFIRM_DELETE
     
-if action == 'get_happ_qr':
+    if action == 'get_happ_qr':
         username = context.user_data.get('username')
         if not username:
             await query.answer(text=t('not_found', context), show_alert=True)
