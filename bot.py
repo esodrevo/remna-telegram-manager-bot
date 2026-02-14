@@ -35,8 +35,8 @@ COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("st
     SELECTING_HWID_OPTION, AWAITING_HWID_VALUE, SELECTING_SQUADS, EDIT_ALL_USERS_MENU,
     AWAITING_BULK_VALUE, CONFIRM_BULK_ACTION, AWAITING_HOURS_FOR_UPDATED_LIST,
     SELECT_BULK_HWID_ACTION, AWAITING_BULK_HWID_VALUE, AWAITING_TIMEZONE_SETTING,
-    EXPIRING_USERS_MENU, AWAITING_HWID_EDIT
-) = range(26)
+    EXPIRING_USERS_MENU, AWAITING_HWID_EDIT, USER_CREATED_MENU
+) = range(27)
 
 
 def get_settings() -> dict:
@@ -963,21 +963,127 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     
     data, error = await asyncio.to_thread(api_request, 'POST', '/api/users', payload=payload)
     
-    keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
     if error:
+        keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
         message_text = t('error_creating_user', context, error=html.escape(error))
-    else:
-        message_text = build_user_created_message(data.get('response', {}), context)
+        await query.message.edit_text(
+            text=message_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return MAIN_MENU
 
-    await query.message.edit_text(
-        text=message_text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=reply_markup
-    )
+    # Store created user data specifically for the banner menu
+    context.user_data['created_user_response'] = data.get('response', {})
+    
+    # Show the selection menu
+    return await show_banner_selection_menu(update, context)
+    
+async def show_banner_selection_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # Helper to determine if we are editing a message or sending a new one (after photo deletion)
+    query = update.callback_query
+    
+    user_response = context.user_data.get('created_user_response', {})
+    username = user_response.get('username', 'Unknown')
+
+    keyboard = [
+        [InlineKeyboardButton(t('btn_happ_banner', context), callback_data='banner_happ')],
+        [InlineKeyboardButton(t('btn_sub_banner', context), callback_data='banner_sub')],
+        [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]
+    ]
+    
+    text = t('user_created_select_format', context, username=html.escape(username))
+    
+    # Try to edit, if fails (e.g. previous was a photo), send new
+    try:
+        if query and query.message:
+            await query.message.edit_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        else:
+            # Fallback if accessed differently
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    except BadRequest:
+        # Likely trying to edit a photo message to text, delete and send text
+        if query and query.message:
+            await query.message.delete()
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
         
-    return MAIN_MENU
+    return USER_CREATED_MENU
+
+async def banner_generation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    action = query.data
+    
+    if action == 'back_to_banner_menu':
+        return await show_banner_selection_menu(update, context)
+        
+    user_response = context.user_data.get('created_user_response', {})
+    if not user_response:
+        await query.message.reply_text("Session expired. Please verify user in Manage User.")
+        return MAIN_MENU
+
+    # Extract Info
+    username = user_response.get('username')
+    limit = format_bytes(user_response.get('trafficLimitBytes'))
+    raw_sub_link = user_response.get('subscriptionUrl', '')
+    
+    expire_dt = parse_iso_date(user_response.get('expireAt'))
+    expire_date_str = t('unlimited', context)
+    if expire_dt:
+        expire_date_str = expire_dt.strftime("%Y/%m/%d")
+
+    # Determine Link type
+    final_link = raw_sub_link
+    loading_msg = await context.bot.send_message(chat_id=update.effective_chat.id, text="⏳ Generating Banner...")
+    
+    try:
+        if action == 'banner_happ':
+            # Encrypt for Happ
+            encrypt_payload = {"linkToEncrypt": raw_sub_link}
+            enc_data, enc_error = await asyncio.to_thread(api_request, 'POST', '/api/system/tools/happ/encrypt', payload=encrypt_payload)
+            if not enc_error and enc_data and 'response' in enc_data:
+                final_link = enc_data['response'].get('encryptedLink')
+        
+        # Format Caption
+        caption = t('banner_caption_template', context,
+                    username=html.escape(username),
+                    limit=limit,
+                    expire_date=expire_date_str,
+                    link=html.escape(final_link))
+
+        # Generate QR
+        qr_bytes = generate_qr_code(final_link)
+        
+        # Keyboard
+        keyboard = [
+            [InlineKeyboardButton(t('back_to_banner_select', context), callback_data='back_to_banner_menu')],
+            [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]
+        ]
+
+        # Cleanup previous menu/loading
+        try: await query.message.delete()
+        except: pass
+        await loading_msg.delete()
+
+        # Send Photo
+        if qr_bytes:
+            # Check caption length limit (1024 chars). If too long, send as text.
+            if len(caption) > 1024:
+                await context.bot.send_photo(chat_id=update.effective_chat.id, photo=qr_bytes)
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=caption, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+            else:
+                await context.bot.send_photo(chat_id=update.effective_chat.id, photo=qr_bytes, caption=caption, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=caption, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+
+        return USER_CREATED_MENU
+
+    except Exception as e:
+        logger.error(f"Error generating banner: {e}")
+        try: await loading_msg.delete()
+        except: pass
+        await query.message.reply_text(f"Error: {str(e)}")
+        return USER_CREATED_MENU
 
 async def set_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer()
@@ -1483,6 +1589,11 @@ def main() -> None:
             SELECTING_HWID_OPTION: [CallbackQueryHandler(hwid_option_handler, pattern='^hwid_')],
             AWAITING_HWID_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_hwid_value)],
             SELECTING_SQUADS: [CallbackQueryHandler(squad_selection_handler, pattern='^squad_|^create_user_final$')],
+            
+            USER_CREATED_MENU: [
+                CallbackQueryHandler(banner_generation_handler, pattern='^banner_'),
+                CallbackQueryHandler(show_banner_selection_menu, pattern='^back_to_banner_menu$')
+            ],
             
             EDIT_ALL_USERS_MENU: [CallbackQueryHandler(edit_all_users_menu_handler)],
             AWAITING_BULK_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_bulk_change_value)],
