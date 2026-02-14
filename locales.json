@@ -147,7 +147,12 @@
     "enable_hwid_bulk_btn": "✅ فعال سازی",
     "disable_hwid_bulk_btn": "🚫 غیرفعال سازی",
     "ask_for_bulk_hwid_value": "📱 لطفاً تعداد مجاز دستگاه برای همه کاربران را وارد کنید (مثلا: 1 یا 2):",
-    "change_type_hwid": "محدودیت HWID"
+    "change_type_hwid": "محدودیت HWID",
+	"user_created_select_format": "✅ کاربر <b>{username}</b> با موفقیت ساخته شد.\n\nلطفاً فرمت اشتراک‌گذاری را انتخاب کنید:",
+    "btn_happ_banner": "🎨 بنر Happ Crypto",
+    "btn_sub_banner": "🎨 بنر سابسکریپشن",
+    "back_to_banner_select": "🔙 بازگشت به انتخاب بنر",
+    "banner_caption_template": "✨ <b>سرویس جدید شما آماده است!</b> ✨\n\n👤 <b>نام کاربری:</b> <code>{username}</code>\n📊 <b>حجم مجاز:</b> {limit}\n📅 <b>تاریخ انقضا:</b> {expire_date}\n\n🔗 <b>لینک اتصال:</b>\n<code>{link}</code>\n\nامیدواریم از سرعت و کیفیت لذت ببرید! 🚀"
   },
   "en": {
     "hwid_limit": "⚙️ <b>HWID Limit:</b>",
@@ -297,7 +302,12 @@
     "enable_hwid_bulk_btn": "✅ Enable",
     "disable_hwid_bulk_btn": "🚫 Disable",
     "ask_for_bulk_hwid_value": "📱 Please enter the allowed device count for all users (e.g., 1 or 2):",
-    "change_type_hwid": "HWID Limit"
+    "change_type_hwid": "HWID Limit",
+	"user_created_select_format": "✅ User <b>{username}</b> created successfully.\n\nPlease select the sharing format:",
+    "btn_happ_banner": "🎨 Happ Crypto Banner",
+    "btn_sub_banner": "🎨 Subscription Banner",
+    "back_to_banner_select": "🔙 Back to Selection",
+    "banner_caption_template": "✨ <b>Your New Service is Ready!</b> ✨\n\n👤 <b>Username:</b> <code>{username}</code>\n📊 <b>Data Limit:</b> {limit}\n📅 <b>Expiry:</b> {expire_date}\n\n🔗 <b>Connection Link:</b>\n<code>{link}</code>\n\nEnjoy the speed and quality! 🚀"
   },
   "ru": {
     "hwid_limit": "⚙️ <b>Лимит HWID:</b>",
@@ -447,6 +457,11 @@
     "enable_hwid_bulk_btn": "✅ Включить",
     "disable_hwid_bulk_btn": "🚫 Отключить",
     "ask_for_bulk_hwid_value": "📱 Пожалуйста, введите разрешенное количество устройств для всех пользователей (напр., 1 или 2):",
-    "change_type_hwid": "Лимит HWID"
+    "change_type_hwid": "Лимит HWID",
+	"user_created_select_format": "✅ Пользователь <b>{username}</b> успешно создан.\n\nПожалуйста, выберите формат:",
+    "btn_happ_banner": "🎨 Баннер Happ Crypto",
+    "btn_sub_banner": "🎨 Баннер подписки",
+    "back_to_banner_select": "🔙 Назад к выбору",
+    "banner_caption_template": "✨ <b>Ваш новый сервис готов!</b> ✨\n\n👤 <b>Имя пользователя:</b> <code>{username}</code>\n📊 <b>Лимит:</b> {limit}\n📅 <b>Истекает:</b> {expire_date}\n\n🔗 <b>Ссылка:</b>\n<code>{link}</code>\n\nНаслаждайтесь скоростью! 🚀"
   }
 }
