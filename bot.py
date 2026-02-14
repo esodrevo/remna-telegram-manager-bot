@@ -274,9 +274,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     chat_id = update.effective_chat.id
     
     if update.callback_query:
+        # این خط باعث می‌شود لودینگ دکمه متوقف شود
+        await update.callback_query.answer()
         try:
+            # تلاش برای ویرایش پیام (اگر متن باشد)
             await update.callback_query.message.edit_text(message_text, reply_markup=reply_markup)
         except BadRequest:
+            # اگر پیام عکس باشد، ویرایش شکست می‌خورد. پس عکس قبلی را پاک می‌کنیم
+            try:
+                await update.callback_query.message.delete()
+            except Exception:
+                pass
+            # و منوی جدید را ارسال می‌کنیم
             await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup)
     else:
         await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup)
@@ -785,21 +794,26 @@ async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         days = int(update.message.text)
         if days < 0: raise ValueError
         
-        expire_time_setting = parse_timezone_setting()
-        if expire_time_setting:
-            target_tz, target_time = expire_time_setting
-            now_in_target_tz = datetime.now(target_tz)
-            expire_date_local = now_in_target_tz + timedelta(days=days)
-            expire_datetime_local = expire_date_local.replace(
-                hour=target_time.hour, minute=target_time.minute, second=0, microsecond=0
-            )
-            expire_datetime_utc = expire_datetime_local.astimezone(timezone.utc)
+        # اگر کاربر 0 وارد کرد، یعنی نامحدود
+        if days == 0:
+             context.user_data['new_user_data']['expireAt'] = None
         else:
-            # Fallback to original behavior
-            expire_datetime_utc = datetime.now(timezone.utc) + timedelta(days=days)
-            expire_datetime_utc = expire_datetime_utc.replace(hour=18, minute=30, second=0, microsecond=0)
-        
-        context.user_data['new_user_data']['expireAt'] = expire_datetime_utc.isoformat().replace('+00:00', 'Z')
+            # محاسبات تاریخ برای روزهای بیشتر از 0
+            expire_time_setting = parse_timezone_setting()
+            if expire_time_setting:
+                target_tz, target_time = expire_time_setting
+                now_in_target_tz = datetime.now(target_tz)
+                expire_date_local = now_in_target_tz + timedelta(days=days)
+                expire_datetime_local = expire_date_local.replace(
+                    hour=target_time.hour, minute=target_time.minute, second=0, microsecond=0
+                )
+                expire_datetime_utc = expire_datetime_local.astimezone(timezone.utc)
+            else:
+                # Fallback to original behavior
+                expire_datetime_utc = datetime.now(timezone.utc) + timedelta(days=days)
+                expire_datetime_utc = expire_datetime_utc.replace(hour=18, minute=30, second=0, microsecond=0)
+            
+            context.user_data['new_user_data']['expireAt'] = expire_datetime_utc.isoformat().replace('+00:00', 'Z')
         
         await update.message.delete()
         
@@ -1362,25 +1376,34 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         editing_type = context.user_data.get('editing')
         if editing_type == 'limit':
             new_limit_gb = float(update.message.text)
+            # اگر حجم 0 باشد یعنی نامحدود (0)
             payload["trafficLimitBytes"] = int(new_limit_gb * 1024**3)
             current_state = AWAITING_LIMIT
+
         elif editing_type == 'expire':
             days = int(update.message.text)
-            expire_time_setting = parse_timezone_setting()
-            if expire_time_setting:
-                target_tz, target_time = expire_time_setting
-                now_in_target_tz = datetime.now(target_tz)
-                new_expire_date_local = now_in_target_tz + timedelta(days=days)
-                new_expire_datetime_local = new_expire_date_local.replace(
-                    hour=target_time.hour, minute=target_time.minute, second=0, microsecond=0
-                )
-                new_expire_datetime_utc = new_expire_datetime_local.astimezone(timezone.utc)
+            
+            # اگر روز 0 باشد یعنی نامحدود (None)
+            if days == 0:
+                payload["expireAt"] = None
             else:
-                new_expire_datetime_utc = datetime.now(timezone.utc) + timedelta(days=days)
-                new_expire_datetime_utc = new_expire_datetime_utc.replace(hour=18, minute=30, second=0, microsecond=0)
+                expire_time_setting = parse_timezone_setting()
+                if expire_time_setting:
+                    target_tz, target_time = expire_time_setting
+                    now_in_target_tz = datetime.now(target_tz)
+                    new_expire_date_local = now_in_target_tz + timedelta(days=days)
+                    new_expire_datetime_local = new_expire_date_local.replace(
+                        hour=target_time.hour, minute=target_time.minute, second=0, microsecond=0
+                    )
+                    new_expire_datetime_utc = new_expire_datetime_local.astimezone(timezone.utc)
+                else:
+                    new_expire_datetime_utc = datetime.now(timezone.utc) + timedelta(days=days)
+                    new_expire_datetime_utc = new_expire_datetime_utc.replace(hour=18, minute=30, second=0, microsecond=0)
 
-            payload["expireAt"] = new_expire_datetime_utc.isoformat().replace('+00:00', 'Z')
+                payload["expireAt"] = new_expire_datetime_utc.isoformat().replace('+00:00', 'Z')
+            
             current_state = AWAITING_EXPIRE
+
         elif editing_type == 'hwid':
             new_hwid_limit = int(update.message.text)
             if new_hwid_limit < 0: raise ValueError
