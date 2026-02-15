@@ -1723,12 +1723,16 @@ def main() -> None:
     )
     
     application.add_handler(conv_handler)
+
+    if application.job_queue:
+        application.job_queue.run_once(onhold_monitor_job, 0)
     
     logger.info("Bot is running...")
-    application.job_queue.run_once(lambda context: asyncio.create_task(onhold_monitor_task(application)), 0)
     application.run_polling()
     
-async def onhold_monitor_task(bot: Application):
+async def onhold_monitor_job(context: ContextTypes.DEFAULT_TYPE):
+    """تسک پس‌زمینه که توسط JobQueue اجرا می‌شود"""
+    bot = context.application
     while True:
         try:
             users_data, error = await api_request_get_all_users()
