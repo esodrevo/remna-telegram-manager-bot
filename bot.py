@@ -1647,7 +1647,11 @@ def main() -> None:
             SELECTING_LANGUAGE: [CallbackQueryHandler(set_lang_callback, pattern='^set_lang_')],
             AWAITING_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_user_card)],
             USER_MENU: [CallbackQueryHandler(user_menu_handler, pattern='^(?!back_to_user_info).*$')],
-            QR_VIEW: [CallbackQueryHandler(back_to_user_info_handler, pattern='^back_to_user_info$')],
+            QR_VIEW: [
+                CallbackQueryHandler(back_to_user_info_handler, pattern='^back_to_user_info$'),
+                # اضافه کردن خط زیر برای پشتیبانی از دکمه‌های صفحه‌بندی در حالت مشاهده لینک‌ها
+                CallbackQueryHandler(user_menu_handler, pattern='^show_all_links:') 
+            ],
             AWAITING_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
             AWAITING_EXPIRE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
             AWAITING_HWID_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
