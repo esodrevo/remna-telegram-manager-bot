@@ -181,12 +181,18 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
     safe_username = html.escape(user_data.get('username') or 'N/A')
     safe_client_app = html.escape(user_data.get('subLastUserAgent') or t('unknown', context))
     safe_sub_url = html.escape(user_data.get('subscriptionUrl') or t('not_found', context))
-    status = t('status_active', context) if user_data.get('status') == 'ACTIVE' else t('status_inactive', context)
 
     data_limit = user_data.get('trafficLimitBytes')
     
     user_traffic = user_data.get('userTraffic') or {}
     data_usage = user_traffic.get('usedTrafficBytes', 0)
+    
+    online_at_str = user_traffic.get('onlineAt')
+    online_dt = parse_iso_date(online_at_str)
+    online_relative = human_readable_timediff(online_dt, context)
+    
+    status_label = t('status_active', context) if user_data.get('status') == 'ACTIVE' else t('status_inactive', context)
+    full_status = f"{status_label} / {online_relative}"
 
     limit_formatted = format_bytes(data_limit)
     usage_formatted = "0.00 B"
@@ -216,7 +222,7 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
         hwid_status_text = t('hwid_limit_value', context, limit=hwid_limit)
     
     return (f"{t('user_info_title', context, username=safe_username)}\n\n"
-            f"{t('status', context)} {status}\n"
+            f"{t('status', context)} {full_status}\n"
             f"{t('hwid_limit', context)} {hwid_status_text}\n\n"
             f"{t('total_limit', context)} {limit_formatted}\n"
             f"{t('usage', context)} {usage_formatted}\n"
@@ -1150,6 +1156,7 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ],
         [
             InlineKeyboardButton(t('delete_user_btn', context), callback_data='delete_user')
+            InlineKeyboardButton(t('user_links_btn', context), callback_data='show_all_links')
         ],
         [
             InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')
@@ -1193,6 +1200,32 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         ]]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
         return CONFIRM_DELETE
+        
+    if action == 'show_all_links':
+        username = context.user_data.get('username')
+        await query.answer()
+        wait_msg = await query.message.reply_text("⏳ دریافت لینک‌ها...")
+        
+        sub_data, sub_error = await asyncio.to_thread(api_request, 'GET', f'/api/subscriptions/by-username/{username}')
+        await wait_msg.delete()
+
+        if sub_error or not sub_data:
+            await query.message.reply_text(t('error_fetching', context, error=sub_error))
+            return USER_MENU
+
+        links = sub_data.get('response', {}).get('links', [])
+        if not links:
+            await query.message.reply_text(t('no_links_found', context))
+            return USER_MENU
+
+        links_text = t('user_links_title', context, username=html.escape(username)) + "\n\n"
+        for link in links:
+            links_text += f"<code>{html.escape(link)}</code>\n\n"
+
+        keyboard = [[InlineKeyboardButton(t('back_to_user_info_btn', context), callback_data='back_to_user_info')]]
+        
+        await query.message.edit_text(text=links_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        return QR_VIEW
     
     if action == 'get_happ_qr':
         username = context.user_data.get('username')
