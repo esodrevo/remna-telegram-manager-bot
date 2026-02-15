@@ -1155,7 +1155,7 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             InlineKeyboardButton(t('get_happ_qr_btn', context), callback_data='get_happ_qr')
         ],
         [
-            InlineKeyboardButton(t('delete_user_btn', context), callback_data='delete_user')
+            InlineKeyboardButton(t('delete_user_btn', context), callback_data='delete_user'),
             InlineKeyboardButton(t('user_links_btn', context), callback_data='show_all_links')
         ],
         [
