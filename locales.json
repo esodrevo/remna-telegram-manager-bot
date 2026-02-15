@@ -152,7 +152,12 @@
     "btn_happ_banner": "🎨 بنر Happ Crypto",
     "btn_sub_banner": "🎨 بنر سابسکریپشن",
     "back_to_banner_select": "🔙 بازگشت به انتخاب بنر",
-    "banner_caption_template": "✨ <b>سرویس جدید شما آماده است!</b> ✨\n\n👤 <b>نام کاربری:</b> <code>{username}</code>\n📊 <b>حجم مجاز:</b> {limit}\n📅 <b>تاریخ انقضا:</b> {expire_date}\n\n🔗 <b>لینک اتصال:</b>\n<code>{link}</code>\n\nامیدواریم از سرعت و کیفیت لذت ببرید! 🚀"
+    "banner_caption_template": "✨ <b>سرویس جدید شما آماده است!</b> ✨\n\n👤 <b>نام کاربری:</b> <code>{username}</code>\n📊 <b>حجم مجاز:</b> {limit}\n📅 <b>تاریخ انقضا:</b> {expire_date}\n\n🔗 <b>لینک اتصال:</b>\n<code>{link}</code>\n\nامیدواریم از سرعت و کیفیت لذت ببرید! 🚀",
+	"online_status": "🟢 آنلاین",
+	"offline_status": "⚪️ آفلاین",
+	"user_links_btn": "🔗 لینک‌های اتصال",
+	"user_links_title": "🔗 <b>لینک‌های اتصال کاربر:</b> <code>{username}</code>",
+	"no_links_found": "ℹ️ هیچ لینکی یافت نشد."
   },
   "en": {
     "hwid_limit": "⚙️ <b>HWID Limit:</b>",
@@ -307,7 +312,12 @@
     "btn_happ_banner": "🎨 Happ Crypto Banner",
     "btn_sub_banner": "🎨 Subscription Banner",
     "back_to_banner_select": "🔙 Back to Selection",
-    "banner_caption_template": "✨ <b>Your New Service is Ready!</b> ✨\n\n👤 <b>Username:</b> <code>{username}</code>\n📊 <b>Data Limit:</b> {limit}\n📅 <b>Expiry:</b> {expire_date}\n\n🔗 <b>Connection Link:</b>\n<code>{link}</code>\n\nEnjoy the speed and quality! 🚀"
+    "banner_caption_template": "✨ <b>Your New Service is Ready!</b> ✨\n\n👤 <b>Username:</b> <code>{username}</code>\n📊 <b>Data Limit:</b> {limit}\n📅 <b>Expiry:</b> {expire_date}\n\n🔗 <b>Connection Link:</b>\n<code>{link}</code>\n\nEnjoy the speed and quality! 🚀",
+	"online_status": "🟢 Online",
+	"offline_status": "⚪️ Offline",
+	"user_links_btn": "🔗 Connection Links",
+	"user_links_title": "🔗 <b>Connection Links for:</b> <code>{username}</code>",
+	"no_links_found": "ℹ️ No links found."
   },
   "ru": {
     "hwid_limit": "⚙️ <b>Лимит HWID:</b>",
@@ -462,6 +472,11 @@
     "btn_happ_banner": "🎨 Баннер Happ Crypto",
     "btn_sub_banner": "🎨 Баннер подписки",
     "back_to_banner_select": "🔙 Назад к выбору",
-    "banner_caption_template": "✨ <b>Ваш новый сервис готов!</b> ✨\n\n👤 <b>Имя пользователя:</b> <code>{username}</code>\n📊 <b>Лимит:</b> {limit}\n📅 <b>Истекает:</b> {expire_date}\n\n🔗 <b>Ссылка:</b>\n<code>{link}</code>\n\nНаслаждайтесь скоростью! 🚀"
+    "banner_caption_template": "✨ <b>Ваш новый сервис готов!</b> ✨\n\n👤 <b>Имя пользователя:</b> <code>{username}</code>\n📊 <b>Лимит:</b> {limit}\n📅 <b>Истекает:</b> {expire_date}\n\n🔗 <b>Ссылка:</b>\n<code>{link}</code>\n\nНаслаждайтесь скоростью! 🚀",
+	"online_status": "🟢 Онлайн",
+	"offline_status": "⚪️ Оффлайн",
+	"user_links_btn": "🔗 Ссылки برای подключения",
+	"user_links_title": "🔗 <b>Ссылки пользователя:</b> <code>{username}</code>",
+	"no_links_found": "ℹ️ Ссылки не найдены."
   }
 }
