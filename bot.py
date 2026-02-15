@@ -1735,13 +1735,15 @@ async def onhold_monitor_task(bot: Application):
             if not error and users_data:
                 all_users = users_data.get('response', {}).get('users', [])
                 
-                onhold_users = [u for u in all_users if u.get('description', '').startswith('onhold:')]
+                onhold_users = [
+                    u for u in all_users 
+                    if u.get('description') is not None and str(u.get('description')).startswith('onhold:')
+                ]
                 
                 for user in onhold_users:
                     first_connect = user.get('userTraffic', {}).get('firstConnectedAt')
-                        
                     if first_connect:
-                        current_desc = user.get('description', '')
+                        current_desc = str(user.get('description'))
                         days = int(current_desc.split(':')[1])
                         
                         first_connect_dt = parse_iso_date(first_connect)
