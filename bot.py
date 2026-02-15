@@ -1156,7 +1156,7 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ],
         [
             InlineKeyboardButton(t('delete_user_btn', context), callback_data='delete_user'),
-            InlineKeyboardButton(t('user_links_btn', context), callback_data='show_all_links')
+            InlineKeyboardButton(t('user_links_btn', context), callback_data='show_all_links:0')
         ],
         [
             InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')
@@ -1201,30 +1201,64 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
         return CONFIRM_DELETE
         
-    if action == 'show_all_links':
+    if action.startswith('show_all_links'):
+        parts = action.split(':')
+        page = int(parts[1]) if len(parts) > 1 else 0
         username = context.user_data.get('username')
-        await query.answer()
-        wait_msg = await query.message.reply_text("⏳ دریافت لینک‌ها...")
         
         sub_data, sub_error = await asyncio.to_thread(api_request, 'GET', f'/api/subscriptions/by-username/{username}')
-        await wait_msg.delete()
-
-        if sub_error or not sub_data:
-            await query.message.reply_text(t('error_fetching', context, error=sub_error))
-            return USER_MENU
-
-        links = sub_data.get('response', {}).get('links', [])
-        if not links:
-            await query.message.reply_text(t('no_links_found', context))
-            return USER_MENU
-
-        links_text = t('user_links_title', context, username=html.escape(username)) + "\n\n"
-        for link in links:
-            links_text += f"<code>{html.escape(link)}</code>\n\n"
-
-        keyboard = [[InlineKeyboardButton(t('back_to_user_info_btn', context), callback_data='back_to_user_info')]]
         
-        await query.message.edit_text(text=links_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        if sub_error or not sub_data:
+            await query.answer(text=f"Error: {sub_error}", show_alert=True)
+            return USER_MENU
+
+        all_links = sub_data.get('response', {}).get('links', [])
+        if not all_links:
+            await query.answer(text=t('no_links_found', context), show_alert=True)
+            return USER_MENU
+
+        # منطق صفحه‌بندی هوشمند بر اساس حجم متن
+        pages = []
+        current_page_links = []
+        current_length = 0
+        max_chars_per_page = 3500 # حاشیه امنیت برای جلوگیری از خطا
+
+        for link in all_links:
+            link_display = f"<code>{html.escape(link)}</code>\n\n"
+            # اگر اضافه کردن این لینک باعث شود از حد مجاز رد شویم، صفحه فعلی را می‌بندیم
+            if current_length + len(link_display) > max_chars_per_page and current_page_links:
+                pages.append(current_page_links)
+                current_page_links = []
+                current_length = 0
+            
+            current_page_links.append(link_display)
+            current_length += len(link_display)
+        
+        if current_page_links:
+            pages.append(current_page_links)
+
+        total_pages = len(pages)
+        if page >= total_pages: page = 0 # جلوگیری از خطای اندیس
+
+        links_text = t('user_links_title', context, username=html.escape(username))
+        links_text += f" (Page {page + 1}/{total_pages})\n\n"
+        links_text += "".join(pages[page])
+
+        # ساخت دکمه‌ها
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton(f"⬅️ صفحه {page}", callback_data=f"show_all_links:{page - 1}"))
+        if page < total_pages - 1:
+            nav_buttons.append(InlineKeyboardButton(f"صفحه {page + 2} ➡️", callback_data=f"show_all_links:{page + 1}"))
+
+        keyboard = [nav_buttons] if nav_buttons else []
+        keyboard.append([InlineKeyboardButton(t('back_to_user_info_btn', context), callback_data='back_to_user_info')])
+
+        try:
+            await query.message.edit_text(text=links_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        except BadRequest as e:
+            if "Message is not modified" not in str(e):
+                logger.error(f"Error in pagination: {e}")
         return QR_VIEW
     
     if action == 'get_happ_qr':
@@ -1612,7 +1646,7 @@ def main() -> None:
             MAIN_MENU: [CallbackQueryHandler(main_menu_handler)],
             SELECTING_LANGUAGE: [CallbackQueryHandler(set_lang_callback, pattern='^set_lang_')],
             AWAITING_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_user_card)],
-            USER_MENU: [CallbackQueryHandler(user_menu_handler)],
+            USER_MENU: [CallbackQueryHandler(user_menu_handler, pattern='^(?!back_to_user_info).*$')],
             QR_VIEW: [CallbackQueryHandler(back_to_user_info_handler, pattern='^back_to_user_info$')],
             AWAITING_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
             AWAITING_EXPIRE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
