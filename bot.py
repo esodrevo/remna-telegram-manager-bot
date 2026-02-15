@@ -35,8 +35,8 @@ COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("st
     SELECTING_HWID_OPTION, AWAITING_HWID_VALUE, SELECTING_SQUADS, EDIT_ALL_USERS_MENU,
     AWAITING_BULK_VALUE, CONFIRM_BULK_ACTION, AWAITING_HOURS_FOR_UPDATED_LIST,
     SELECT_BULK_HWID_ACTION, AWAITING_BULK_HWID_VALUE, AWAITING_TIMEZONE_SETTING,
-    EXPIRING_USERS_MENU, AWAITING_HWID_EDIT, USER_CREATED_MENU
-) = range(27)
+    EXPIRING_USERS_MENU, AWAITING_HWID_EDIT, USER_CREATED_MENU, SELECTING_ONHOLD
+) = range(28)
 
 
 def get_settings() -> dict:
@@ -814,11 +814,14 @@ async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             expire_datetime_utc = datetime.now(timezone.utc) + timedelta(days=days)
             expire_datetime_utc = expire_datetime_utc.replace(hour=18, minute=30, second=0, microsecond=0)
         
+        context.user_data['new_user_data']['expire_days_count'] = days
         context.user_data['new_user_data']['expireAt'] = expire_datetime_utc.isoformat().replace('+00:00', 'Z')
         
         await update.message.delete()
         
+        onhold_status = "✅" if context.user_data['new_user_data'].get('is_onhold') else "❌"
         keyboard = [
+            [InlineKeyboardButton(t('onhold_btn', context, status=onhold_status), callback_data='onhold_toggle')],
             [InlineKeyboardButton(t('enable_hwid_btn', context), callback_data='hwid_enable')],
             [InlineKeyboardButton(t('disable_hwid_btn', context), callback_data='hwid_disable')]
         ]
@@ -839,6 +842,19 @@ async def hwid_option_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     action = query.data
+    
+    if action == 'onhold_toggle':
+        current = context.user_data['new_user_data'].get('is_onhold', False)
+        new_status = not current
+        context.user_data['new_user_data']['is_onhold'] = new_status
+        
+        await query.answer(t('onhold_activated' if new_status else 'onhold_deactivated', context))
+        
+        status_emoji = "✅" if new_status else "❌"
+        keyboard = query.message.reply_markup.inline_keyboard
+        keyboard[0][0] = InlineKeyboardButton(t('onhold_btn', context, status=status_emoji), callback_data='onhold_toggle')
+        await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+        return SELECTING_HWID_OPTION
 
     if action == 'hwid_disable':
         context.user_data['new_user_data']['hwidDeviceLimit'] = 0
@@ -958,6 +974,16 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     
     traffic_limit = new_user_info.get('trafficLimitBytes')
     hwid_limit = new_user_info.get('hwidDeviceLimit')
+    
+    is_onhold = new_user_info.get('is_onhold', False)
+    expire_days = new_user_info.get('expire_days_count', 30)
+    description = ""
+    expire_at = new_user_info.get('expireAt')
+
+    if is_onhold:
+        description = f"onhold:{expire_days}"
+        future_date = datetime.now(timezone.utc) + timedelta(days=60)
+        expire_at = future_date.isoformat().replace('+00:00', 'Z')
 
     payload = {
         "username": username,
@@ -967,8 +993,8 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         "ssPassword": generate_random_string(10),
         "trafficLimitBytes": traffic_limit,
         "trafficLimitStrategy": "NO_RESET",
-        "expireAt": new_user_info.get('expireAt'),
-        "description": "",
+        "expireAt": expire_at,
+        "description": description,
         "tag": generate_random_string(8).upper(),
         "email": f"{generate_random_string(5)}@placeholder.com",
         "telegramId": 0,
@@ -1699,7 +1725,47 @@ def main() -> None:
     application.add_handler(conv_handler)
     
     logger.info("Bot is running...")
+    application.job_queue.run_once(lambda context: asyncio.create_task(onhold_monitor_task(application)), 0)
     application.run_polling()
+    
+async def onhold_monitor_task(bot: Application):
+    while True:
+        try:
+            users_data, error = await api_request_get_all_users()
+            if not error and users_data:
+                all_users = users_data.get('response', {}).get('users', [])
+                
+                onhold_users = [u for u in all_users if u.get('description', '').startswith('onhold:')]
+                
+                for user in onhold_users:
+                    first_connect = user.get('userTraffic', {}).get('firstConnectedAt')
+                        
+                    if first_connect:
+                        current_desc = user.get('description', '')
+                        days = int(current_desc.split(':')[1])
+                        
+                        first_connect_dt = parse_iso_date(first_connect)
+                        new_expire = first_connect_dt + timedelta(days=days)
+                        
+                        update_payload = {
+                            "uuid": user.get('uuid'),
+                            "expireAt": new_expire.isoformat().replace('+00:00', 'Z'),
+                            "description": "" 
+                        }
+                        await asyncio.to_thread(api_request, 'PATCH', '/api/users', payload=update_payload)
+                        
+                        admin_lang = get_lang_from_file()
+                        msg_template = LANGUAGES.get(admin_lang, LANGUAGES['en']).get('onhold_notification')
+                        notification = msg_template.format(
+                            username=user.get('username'),
+                            conn_time=first_connect_dt.strftime('%Y-%m-%d %H:%M'),
+                            days=days
+                        )
+                        await bot.bot.send_message(chat_id=config.ADMIN_USER_ID, text=notification, parse_mode=ParseMode.HTML)
+        except Exception as e:
+            logger.error(f"Onhold Monitor Error: {e}")
+        
+        await asyncio.sleep(180) # check every 3min
 
 if __name__ == "__main__":
     main()
