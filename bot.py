@@ -835,6 +835,10 @@ async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             parse_mode=ParseMode.HTML
         )
         return SELECTING_HWID_OPTION
+    except (ValueError, TypeError):
+        msg = await update.message.reply_text(t('invalid_number', context))
+        context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
+        return AWAITING_EXPIRE_DAYS
 
 
 async def hwid_option_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
