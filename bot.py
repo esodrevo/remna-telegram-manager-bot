@@ -1725,53 +1725,49 @@ def main() -> None:
     application.add_handler(conv_handler)
 
     if application.job_queue:
-        application.job_queue.run_once(onhold_monitor_job, 0)
+        application.job_queue.run_repeating(onhold_monitor_job, interval=180, first=10)
     
     logger.info("Bot is running...")
     application.run_polling()
     
 async def onhold_monitor_job(context: ContextTypes.DEFAULT_TYPE):
-    """تسک پس‌زمینه که توسط JobQueue اجرا می‌شود"""
-    bot = context.application
-    while True:
-        try:
-            users_data, error = await api_request_get_all_users()
-            if not error and users_data:
-                all_users = users_data.get('response', {}).get('users', [])
-                
-                onhold_users = [
-                    u for u in all_users 
-                    if u.get('description') is not None and str(u.get('description')).startswith('onhold:')
-                ]
-                
-                for user in onhold_users:
-                    first_connect = user.get('userTraffic', {}).get('firstConnectedAt')
-                    if first_connect:
-                        current_desc = str(user.get('description'))
-                        days = int(current_desc.split(':')[1])
-                        
-                        first_connect_dt = parse_iso_date(first_connect)
-                        new_expire = first_connect_dt + timedelta(days=days)
-                        
-                        update_payload = {
-                            "uuid": user.get('uuid'),
-                            "expireAt": new_expire.isoformat().replace('+00:00', 'Z'),
-                            "description": "" 
-                        }
-                        await asyncio.to_thread(api_request, 'PATCH', '/api/users', payload=update_payload)
-                        
-                        admin_lang = get_lang_from_file()
-                        msg_template = LANGUAGES.get(admin_lang, LANGUAGES['en']).get('onhold_notification')
-                        notification = msg_template.format(
-                            username=user.get('username'),
-                            conn_time=first_connect_dt.strftime('%Y-%m-%d %H:%M'),
-                            days=days
-                        )
-                        await bot.bot.send_message(chat_id=config.ADMIN_USER_ID, text=notification, parse_mode=ParseMode.HTML)
-        except Exception as e:
-            logger.error(f"Onhold Monitor Error: {e}")
-        
-        await asyncio.sleep(180) # check every 3min
+    """تسک پس‌زمینه که هر بار فقط یک دور اجرا می‌شود"""
+    try:
+        users_data, error = await api_request_get_all_users()
+        if not error and users_data:
+            all_users = users_data.get('response', {}).get('users', [])
+            
+            onhold_users = [
+                u for u in all_users 
+                if u.get('description') and str(u.get('description')).startswith('onhold:')
+            ]
+            
+            for user in onhold_users:
+                first_connect = user.get('userTraffic', {}).get('firstConnectedAt')
+                if first_connect:
+                    current_desc = str(user.get('description'))
+                    days = int(current_desc.split(':')[1])
+                    
+                    first_connect_dt = parse_iso_date(first_connect)
+                    new_expire = first_connect_dt + timedelta(days=days)
+                    
+                    update_payload = {
+                        "uuid": user.get('uuid'),
+                        "expireAt": new_expire.isoformat().replace('+00:00', 'Z'),
+                        "description": "" 
+                    }
+                    await asyncio.to_thread(api_request, 'PATCH', '/api/users', payload=update_payload)
+                    
+                    admin_lang = get_lang_from_file()
+                    msg_template = LANGUAGES.get(admin_lang, LANGUAGES['en']).get('onhold_notification')
+                    notification = msg_template.format(
+                        username=user.get('username'),
+                        conn_time=first_connect_dt.strftime('%Y-%m-%d %H:%M'),
+                        days=days
+                    )
+                    await context.bot.send_message(chat_id=config.ADMIN_USER_ID, text=notification, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.error(f"Onhold Monitor Error: {e}")
 
 if __name__ == "__main__":
     main()
