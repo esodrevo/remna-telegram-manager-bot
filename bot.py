@@ -800,42 +800,41 @@ async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         days = int(update.message.text)
         if days < 0: raise ValueError
         
+        context.user_data['new_user_data']['expire_days_count'] = days
+        
         expire_time_setting = parse_timezone_setting()
         if expire_time_setting:
             target_tz, target_time = expire_time_setting
             now_in_target_tz = datetime.now(target_tz)
-            expire_date_local = now_in_target_tz + timedelta(days=days)
-            expire_datetime_local = expire_date_local.replace(
+            expire_datetime_utc = (now_in_target_tz + timedelta(days=days)).replace(
                 hour=target_time.hour, minute=target_time.minute, second=0, microsecond=0
-            )
-            expire_datetime_utc = expire_datetime_local.astimezone(timezone.utc)
+            ).astimezone(timezone.utc)
         else:
-            # Fallback to original behavior
-            expire_datetime_utc = datetime.now(timezone.utc) + timedelta(days=days)
-            expire_datetime_utc = expire_datetime_utc.replace(hour=18, minute=30, second=0, microsecond=0)
-        
-        context.user_data['new_user_data']['expire_days_count'] = days
+            expire_datetime_utc = (datetime.now(timezone.utc) + timedelta(days=days)).replace(hour=18, minute=30, second=0)
+
         context.user_data['new_user_data']['expireAt'] = expire_datetime_utc.isoformat().replace('+00:00', 'Z')
         
         await update.message.delete()
         
-        onhold_status = "✅" if context.user_data['new_user_data'].get('is_onhold') else "❌"
+        onhold_val = context.user_data['new_user_data'].get('is_onhold', False)
+        status_emoji = "✅" if onhold_val else "❌"
+        
         keyboard = [
-            [InlineKeyboardButton(t('onhold_btn', context, status=onhold_status), callback_data='onhold_toggle')],
+            [InlineKeyboardButton(t('onhold_btn', context, status=status_emoji), callback_data='onhold_toggle')],
             [InlineKeyboardButton(t('enable_hwid_btn', context), callback_data='hwid_enable')],
             [InlineKeyboardButton(t('disable_hwid_btn', context), callback_data='hwid_disable')]
         ]
+        
+        message_text = f"{t('onhold_info', context)}\n\n{t('ask_hwid_limit_prompt', context)}"
+        
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
             message_id=context.user_data.get('prompt_message_id'),
-            text=t('ask_hwid_limit_prompt', context),
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            text=message_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
         )
         return SELECTING_HWID_OPTION
-    except (ValueError, TypeError):
-        msg = await update.message.reply_text(t('invalid_number', context))
-        context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
-        return AWAITING_EXPIRE_DAYS
 
 
 async def hwid_option_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -853,6 +852,7 @@ async def hwid_option_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         status_emoji = "✅" if new_status else "❌"
         keyboard = query.message.reply_markup.inline_keyboard
         keyboard[0][0] = InlineKeyboardButton(t('onhold_btn', context, status=status_emoji), callback_data='onhold_toggle')
+        
         await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
         return SELECTING_HWID_OPTION
 
@@ -1723,7 +1723,7 @@ def main() -> None:
     )
     
     application.add_handler(conv_handler)
-
+    
     if application.job_queue:
         application.job_queue.run_repeating(onhold_monitor_job, interval=180, first=10)
     
