@@ -157,7 +157,11 @@
 	"offline_status": "⚪️ آفلاین",
 	"user_links_btn": "🔗 لینک‌های اتصال",
 	"user_links_title": "🔗 <b>لینک‌های اتصال کاربر:</b> <code>{username}</code>",
-	"no_links_found": "ℹ️ هیچ لینکی یافت نشد."
+	"no_links_found": "ℹ️ هیچ لینکی یافت نشد.",
+	"onhold_btn": "⏳ وضعیت: {status}",
+    "onhold_activated": "✅ On-Hold فعال شد (شروع از اولین اتصال)",
+    "onhold_deactivated": "❌ On-Hold غیرفعال شد",
+    "onhold_notification": "🚀 <b>کاربر فعال شد!</b>\n\n👤 نام کاربری: <code>{username}</code>\n📅 اولین اتصال: {conn_time}\n⌛ انقضا ست شد برای: {days} روز دیگر"
   },
   "en": {
     "hwid_limit": "⚙️ <b>HWID Limit:</b>",
@@ -317,7 +321,11 @@
 	"offline_status": "⚪️ Offline",
 	"user_links_btn": "🔗 Connection Links",
 	"user_links_title": "🔗 <b>Connection Links for:</b> <code>{username}</code>",
-	"no_links_found": "ℹ️ No links found."
+	"no_links_found": "ℹ️ No links found.",
+	"onhold_btn": "⏳ Status: {status}",
+    "onhold_activated": "✅ On-Hold Enabled (Starts on first connection)",
+    "onhold_deactivated": "❌ On-Hold Disabled",
+    "onhold_notification": "🚀 <b>User Activated!</b>\n\n👤 Username: <code>{username}</code>\n📅 First Connect: {conn_time}\n⌛ Expiry set for: {days} days later"
   },
   "ru": {
     "hwid_limit": "⚙️ <b>Лимит HWID:</b>",
@@ -477,6 +485,10 @@
 	"offline_status": "⚪️ Оффлайн",
 	"user_links_btn": "🔗 Ссылки برای подключения",
 	"user_links_title": "🔗 <b>Ссылки пользователя:</b> <code>{username}</code>",
-	"no_links_found": "ℹ️ Ссылки не найдены."
+	"no_links_found": "ℹ️ Ссылки не найдены.",
+	"onhold_btn": "⏳ Статус: {status}",
+    "onhold_activated": "✅ On-Hold включен (активация при первом подключении)",
+    "onhold_deactivated": "❌ On-Hold отключен",
+    "onhold_notification": "🚀 <b>Пользователь активирован!</b>\n\n👤 Имя пользователя: <code>{username}</code>\n📅 Первое подключение: {conn_time}\n⌛ Срок действия установлен на: {days} дней"
   }
 }
