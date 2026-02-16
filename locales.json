@@ -161,7 +161,8 @@
 	"onhold_btn": "⏳ وضعیت On-Hold: {status}",
     "onhold_info": "💡 <b>قابلیت On-Hold چیست؟</b>\nبا فعال‌سازی این گزینه، تاریخ انقضای کاربر از لحظه <b>اولین اتصال</b> محاسبه خواهد شد. (مناسب برای اکانت‌های رزرو)",
     "onhold_activated": "✅ قابلیت On-Hold فعال شد.",
-    "onhold_deactivated": "❌ قابلیت On-Hold غیرفعال شد."
+    "onhold_deactivated": "❌ قابلیت On-Hold غیرفعال شد.",
+	"onhold_notification": "🚀 کاربر <b>{username}</b> متصل شد!\n\nزمان اتصال: {conn_time}\nاعتبار فعال شده: {days} روز"
   },
   "en": {
     "hwid_limit": "⚙️ <b>HWID Limit:</b>",
@@ -325,7 +326,8 @@
 	"onhold_btn": "⏳ On-Hold Status: {status}",
     "onhold_info": "💡 <b>What is On-Hold?</b>\nIf enabled, the expiration date will be calculated from the moment of the <b>first connection</b>.",
     "onhold_activated": "✅ On-Hold enabled.",
-    "onhold_deactivated": "❌ On-Hold disabled."
+    "onhold_deactivated": "❌ On-Hold disabled.",
+	"onhold_notification": "🚀 User <b>{username}</b> connected!\n\nConnection time: {conn_time}\nActivated duration: {days} days"
   },
   "ru": {
     "hwid_limit": "⚙️ <b>Лимит HWID:</b>",
@@ -489,6 +491,7 @@
 	"onhold_btn": "⏳ Статус On-Hold: {status}",
     "onhold_info": "💡 <b>Что такое On-Hold?</b>\nЕсли включено, срок действия будет рассчитываться с момента <b>первого подключения</b>.",
     "onhold_activated": "✅ On-Hold включен.",
-    "onhold_deactivated": "❌ On-Hold отключен."
+    "onhold_deactivated": "❌ On-Hold отключен.",
+	"onhold_notification": "🚀 Пользователь <b>{username}</b> подключился!\n\nВремя подключения: {conn_time}\nАктивированный период: {days} дн."
   }
 }
