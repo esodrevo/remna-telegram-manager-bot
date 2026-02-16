@@ -801,64 +801,68 @@ async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if days < 0: raise ValueError
         
         context.user_data['new_user_data']['expire_days_count'] = days
-        
-        expire_time_setting = parse_timezone_setting()
-        if expire_time_setting:
-            target_tz, target_time = expire_time_setting
-            now_in_target_tz = datetime.now(target_tz)
-            expire_datetime_utc = (now_in_target_tz + timedelta(days=days)).replace(
-                hour=target_time.hour, minute=target_time.minute, second=0, microsecond=0
-            ).astimezone(timezone.utc)
-        else:
-            expire_datetime_utc = (datetime.now(timezone.utc) + timedelta(days=days)).replace(hour=18, minute=30, second=0)
-
-        context.user_data['new_user_data']['expireAt'] = expire_datetime_utc.isoformat().replace('+00:00', 'Z')
-        
+        # تنظیم مقدار اولیه برای جلوگیری از ارور
+        if 'is_onhold' not in context.user_data['new_user_data']:
+            context.user_data['new_user_data']['is_onhold'] = False
+            
         await update.message.delete()
         
-        onhold_val = context.user_data['new_user_data'].get('is_onhold', False)
-        status_emoji = "✅" if onhold_val else "❌"
-        
-        keyboard = [
-            [InlineKeyboardButton(t('onhold_btn', context, status=status_emoji), callback_data='onhold_toggle')],
-            [InlineKeyboardButton(t('enable_hwid_btn', context), callback_data='hwid_enable')],
-            [InlineKeyboardButton(t('disable_hwid_btn', context), callback_data='hwid_disable')]
-        ]
-        
-        message_text = f"{t('onhold_info', context)}\n\n{t('ask_hwid_limit_prompt', context)}"
-        
-        await context.bot.edit_message_text(
-            chat_id=update.effective_chat.id,
-            message_id=context.user_data.get('prompt_message_id'),
-            text=message_text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode=ParseMode.HTML
-        )
-        return SELECTING_HWID_OPTION
+        # نمایش منوی انتخاب وضعیت On-Hold
+        return await show_onhold_menu(update, context)
     except (ValueError, TypeError):
         msg = await update.message.reply_text(t('invalid_number', context))
         context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
         return AWAITING_EXPIRE_DAYS
 
+async def show_onhold_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    onhold_val = context.user_data['new_user_data'].get('is_onhold', False)
+    status_emoji = "✅" if onhold_val else "❌"
+    
+    keyboard = [
+        [InlineKeyboardButton(t('onhold_btn', context, status=status_emoji), callback_data='onhold_toggle')],
+        [InlineKeyboardButton(t('done_squad_selection_btn', context), callback_data='confirm_onhold_and_next')]
+    ]
+    
+    message_text = f"{t('onhold_info', context)}\n\n{t('ask_for_expire_days', context)}: <b>{context.user_data['new_user_data']['expire_days_count']} {t('days_unit', context)}</b>"
+    
+    chat_id = update.effective_chat.id
+    message_id = context.user_data.get('prompt_message_id')
+    
+    await context.bot.edit_message_text(
+        chat_id=chat_id, 
+        message_id=message_id, 
+        text=message_text, 
+        reply_markup=InlineKeyboardMarkup(keyboard), 
+        parse_mode=ParseMode.HTML
+    )
+    return SELECTING_ONHOLD
+
+async def onhold_toggle_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    current = context.user_data['new_user_data'].get('is_onhold', False)
+    context.user_data['new_user_data']['is_onhold'] = not current
+    
+    # نمایش مجدد منو با وضعیت جدید
+    return await show_onhold_menu(update, context)
+
+async def confirm_onhold_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    # حالا که وضعیت On-Hold مشخص شد، به مرحله انتخاب HWID می‌رویم
+    keyboard = [
+        [InlineKeyboardButton(t('enable_hwid_btn', context), callback_data='hwid_enable')],
+        [InlineKeyboardButton(t('disable_hwid_btn', context), callback_data='hwid_disable')]
+    ]
+    await query.message.edit_text(t('ask_hwid_limit_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    return SELECTING_HWID_OPTION
 
 async def hwid_option_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     action = query.data
-    
-    if action == 'onhold_toggle':
-        current = context.user_data['new_user_data'].get('is_onhold', False)
-        new_status = not current
-        context.user_data['new_user_data']['is_onhold'] = new_status
-        
-        await query.answer(t('onhold_activated' if new_status else 'onhold_deactivated', context))
-        
-        status_emoji = "✅" if new_status else "❌"
-        keyboard = query.message.reply_markup.inline_keyboard
-        keyboard[0][0] = InlineKeyboardButton(t('onhold_btn', context, status=status_emoji), callback_data='onhold_toggle')
-        
-        await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
-        return SELECTING_HWID_OPTION
 
     if action == 'hwid_disable':
         context.user_data['new_user_data']['hwidDeviceLimit'] = 0
@@ -1696,6 +1700,10 @@ def main() -> None:
             AWAITING_NEW_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_new_username)],
             AWAITING_DATA_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_data_limit)],
             AWAITING_EXPIRE_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_expire_days)],
+            SELECTING_ONHOLD: [
+                CallbackQueryHandler(onhold_toggle_handler, pattern='^onhold_toggle$'),
+                CallbackQueryHandler(confirm_onhold_handler, pattern='^confirm_onhold_and_next$')
+            ],
             SELECTING_HWID_OPTION: [CallbackQueryHandler(hwid_option_handler, pattern='^hwid_')],
             AWAITING_HWID_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_hwid_value)],
             SELECTING_SQUADS: [CallbackQueryHandler(squad_selection_handler, pattern='^squad_|^create_user_final$')],
