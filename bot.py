@@ -783,81 +783,67 @@ async def get_data_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         limit_gb = int(update.message.text)
         if limit_gb < 0: raise ValueError
         context.user_data['new_user_data']['trafficLimitBytes'] = limit_gb * (1024**3)
+        
+        if 'is_onhold' not in context.user_data['new_user_data']:
+            context.user_data['new_user_data']['is_onhold'] = False
+
         await update.message.delete()
-        await context.bot.edit_message_text(
-            chat_id=update.effective_chat.id,
-            message_id=context.user_data.get('prompt_message_id'),
-            text=t('ask_for_expire_days', context)
-        )
-        return AWAITING_EXPIRE_DAYS
+        
+        return await show_expire_days_prompt(update, context)
     except (ValueError, TypeError):
         msg = await update.message.reply_text(t('invalid_number', context))
         context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
         return AWAITING_DATA_LIMIT
-
-async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    try:
-        days = int(update.message.text)
-        if days < 0: raise ValueError
         
-        context.user_data['new_user_data']['expire_days_count'] = days
-        # تنظیم مقدار اولیه برای جلوگیری از ارور
-        if 'is_onhold' not in context.user_data['new_user_data']:
-            context.user_data['new_user_data']['is_onhold'] = False
-            
-        await update.message.delete()
-        
-        # نمایش منوی انتخاب وضعیت On-Hold
-        return await show_onhold_menu(update, context)
-    except (ValueError, TypeError):
-        msg = await update.message.reply_text(t('invalid_number', context))
-        context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
-        return AWAITING_EXPIRE_DAYS
-
-async def show_onhold_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    onhold_val = context.user_data['new_user_data'].get('is_onhold', False)
-    status_emoji = "✅" if onhold_val else "❌"
+async def show_expire_days_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    onhold_status = "✅" if context.user_data['new_user_data'].get('is_onhold') else "❌"
+    keyboard = [[InlineKeyboardButton(t('onhold_btn', context, status=onhold_status), callback_data='onhold_toggle')]]
     
-    keyboard = [
-        [InlineKeyboardButton(t('onhold_btn', context, status=status_emoji), callback_data='onhold_toggle')],
-        [InlineKeyboardButton(t('done_squad_selection_btn', context), callback_data='confirm_onhold_and_next')]
-    ]
-    
-    message_text = f"{t('onhold_info', context)}\n\n{t('ask_for_expire_days', context)}: <b>{context.user_data['new_user_data']['expire_days_count']} {t('days_unit', context)}</b>"
-    
-    chat_id = update.effective_chat.id
-    message_id = context.user_data.get('prompt_message_id')
+    text = f"{t('ask_for_expire_days', context)}\n\n{t('onhold_info', context)}"
     
     await context.bot.edit_message_text(
-        chat_id=chat_id, 
-        message_id=message_id, 
-        text=message_text, 
-        reply_markup=InlineKeyboardMarkup(keyboard), 
+        chat_id=update.effective_chat.id,
+        message_id=context.user_data.get('prompt_message_id'),
+        text=text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.HTML
     )
-    return SELECTING_ONHOLD
-
-async def onhold_toggle_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    return AWAITING_EXPIRE_DAYS
+    
+async def onhold_toggle_in_expire_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     
     current = context.user_data['new_user_data'].get('is_onhold', False)
     context.user_data['new_user_data']['is_onhold'] = not current
     
-    # نمایش مجدد منو با وضعیت جدید
-    return await show_onhold_menu(update, context)
+    # فقط پیام را بروزرسانی می‌کنیم و در همان استیت AWAITING_EXPIRE_DAYS می‌مانیم
+    return await show_expire_days_prompt(update, context)
 
-async def confirm_onhold_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    
-    # حالا که وضعیت On-Hold مشخص شد، به مرحله انتخاب HWID می‌رویم
-    keyboard = [
-        [InlineKeyboardButton(t('enable_hwid_btn', context), callback_data='hwid_enable')],
-        [InlineKeyboardButton(t('disable_hwid_btn', context), callback_data='hwid_disable')]
-    ]
-    await query.message.edit_text(t('ask_hwid_limit_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
-    return SELECTING_HWID_OPTION
+async def get_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        days = int(update.message.text)
+        if days <= 0: raise ValueError
+        context.user_data['new_user_data']['expire_days_count'] = days
+        
+        await update.message.delete()
+        
+        keyboard = [
+            [InlineKeyboardButton(t('enable_hwid_btn', context), callback_data='hwid_enable')],
+            [InlineKeyboardButton(t('disable_hwid_btn', context), callback_data='hwid_disable')]
+        ]
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=context.user_data.get('prompt_message_id'),
+            text=t('ask_hwid_limit_prompt', context),
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
+        return SELECTING_HWID_OPTION
+    except (ValueError, TypeError):
+        msg = await update.message.reply_text(t('invalid_number', context))
+        context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
+        return AWAITING_EXPIRE_DAYS
 
 async def hwid_option_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -1699,10 +1685,9 @@ def main() -> None:
             
             AWAITING_NEW_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_new_username)],
             AWAITING_DATA_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_data_limit)],
-            AWAITING_EXPIRE_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_expire_days)],
-            SELECTING_ONHOLD: [
-                CallbackQueryHandler(onhold_toggle_handler, pattern='^onhold_toggle$'),
-                CallbackQueryHandler(confirm_onhold_handler, pattern='^confirm_onhold_and_next$')
+            AWAITING_EXPIRE_DAYS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_expire_days),
+                CallbackQueryHandler(onhold_toggle_in_expire_step, pattern='^onhold_toggle$')
             ],
             SELECTING_HWID_OPTION: [CallbackQueryHandler(hwid_option_handler, pattern='^hwid_')],
             AWAITING_HWID_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_hwid_value)],
