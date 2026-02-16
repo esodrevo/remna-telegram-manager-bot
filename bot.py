@@ -972,12 +972,26 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     is_onhold = new_user_info.get('is_onhold', False)
     expire_days = new_user_info.get('expire_days_count', 30)
     description = ""
-    expire_at = new_user_info.get('expireAt')
-
+    
     if is_onhold:
         description = f"onhold:{expire_days}"
         future_date = datetime.now(timezone.utc) + timedelta(days=60)
         expire_at = future_date.isoformat().replace('+00:00', 'Z')
+    else:
+        expire_time_setting = parse_timezone_setting()
+        if expire_time_setting:
+            target_tz, target_time = expire_time_setting
+            now_in_target_tz = datetime.now(target_tz)
+            new_expire_date_local = now_in_target_tz + timedelta(days=expire_days)
+            new_expire_datetime_local = new_expire_date_local.replace(
+                hour=target_time.hour, minute=target_time.minute, second=0, microsecond=0
+            )
+            expire_at_dt = new_expire_datetime_local.astimezone(timezone.utc)
+        else:
+            expire_at_dt = datetime.now(timezone.utc) + timedelta(days=expire_days)
+            expire_at_dt = expire_at_dt.replace(hour=18, minute=30, second=0, microsecond=0)
+        
+        expire_at = expire_at_dt.isoformat().replace('+00:00', 'Z')
 
     payload = {
         "username": username,
@@ -1008,10 +1022,7 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         )
         return MAIN_MENU
 
-    # Store created user data specifically for the banner menu
     context.user_data['created_user_response'] = data.get('response', {})
-    
-    # Show the selection menu
     return await show_banner_selection_menu(update, context)
     
 async def show_banner_selection_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
