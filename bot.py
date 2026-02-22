@@ -35,8 +35,9 @@ COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("st
     SELECTING_HWID_OPTION, AWAITING_HWID_VALUE, SELECTING_SQUADS, EDIT_ALL_USERS_MENU,
     AWAITING_BULK_VALUE, CONFIRM_BULK_ACTION, AWAITING_HOURS_FOR_UPDATED_LIST,
     SELECT_BULK_HWID_ACTION, AWAITING_BULK_HWID_VALUE, AWAITING_TIMEZONE_SETTING,
-    EXPIRING_USERS_MENU, AWAITING_HWID_EDIT, USER_CREATED_MENU, SELECTING_ONHOLD
-) = range(28)
+    EXPIRING_USERS_MENU, AWAITING_HWID_EDIT, USER_CREATED_MENU, SELECTING_ONHOLD,
+    SELECT_CLEANUP_GROUP, AWAITING_CLEANUP_HOURS, CONFIRM_CLEANUP
+) = range(31)
 
 
 def get_settings() -> dict:
@@ -394,6 +395,7 @@ async def show_edit_all_users_menu(update: Update, context: ContextTypes.DEFAULT
         [InlineKeyboardButton(t('bulk_edit_volume_btn', context), callback_data='bulk_edit_volume')],
         [InlineKeyboardButton(t('bulk_edit_date_btn', context), callback_data='bulk_edit_date')],
         [InlineKeyboardButton(t('bulk_edit_hwid_btn', context), callback_data='bulk_edit_hwid')],
+        [InlineKeyboardButton(t('smart_cleanup_btn', context), callback_data='bulk_smart_cleanup')],
         [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -422,6 +424,9 @@ async def edit_all_users_menu_handler(update: Update, context: ContextTypes.DEFA
         prompt_message = await query.message.edit_text(t('ask_hwid_bulk_action', context), reply_markup=InlineKeyboardMarkup(keyboard))
         context.user_data['prompt_message_id'] = prompt_message.message_id
         return SELECT_BULK_HWID_ACTION
+        
+    elif action == 'bulk_smart_cleanup':
+        return await show_cleanup_menu(update, context)
 
 async def show_bulk_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -1662,8 +1667,153 @@ async def expiring_users_handler(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.edit_text(report_content, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup_back)
 
     return EXPIRING_USERS_MENU
-
 # --- End of Expiring Users Feature ---
+
+# --- Start of Smart Cleanup Feature ---
+async def show_cleanup_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    keyboard = [
+        [InlineKeyboardButton(t('cleanup_expired_btn', context), callback_data='cleanup_EXPIRED')],
+        [InlineKeyboardButton(t('cleanup_disabled_btn', context), callback_data='cleanup_DISABLED')],
+        [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]
+    ]
+    await query.message.edit_text(text=t('cleanup_menu_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard))
+    return SELECT_CLEANUP_GROUP
+
+async def cleanup_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    status_target = query.data.split('_')[1]
+    context.user_data['cleanup_status'] = status_target
+    
+    prompt_message = await query.message.edit_text(t('ask_for_cleanup_hours', context), parse_mode=ParseMode.HTML)
+    context.user_data['prompt_message_id'] = prompt_message.message_id
+    return AWAITING_CLEANUP_HOURS
+
+async def get_cleanup_hours(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        hours = int(update.message.text)
+        if hours < 0: raise ValueError
+    except (ValueError, TypeError):
+        msg = await update.message.reply_text(t('invalid_number', context))
+        context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
+        return AWAITING_CLEANUP_HOURS
+        
+    context.user_data['cleanup_hours'] = hours
+    
+    prompt_message_id = context.user_data.pop('prompt_message_id', None)
+    try:
+        if prompt_message_id: await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_message_id)
+        await update.message.delete()
+    except BadRequest: pass
+        
+    wait_message = await context.bot.send_message(chat_id=update.effective_chat.id, text="⏳ در حال استخراج و فیلتر کاربران...")
+    
+    users_data, error = await api_request_get_all_users()
+    if error:
+        await wait_message.edit_text(t('error_fetching_all_users', context, error=error))
+        return ConversationHandler.END
+        
+    target_status = context.user_data['cleanup_status']
+    all_users = users_data.get('response', {}).get('users', [])
+    now_utc = datetime.now(timezone.utc)
+    
+    uuids_to_delete = []
+    
+    for user in all_users:
+        if user.get('status') != target_status:
+            continue
+            
+        expire_str = user.get('expireAt')
+        if not expire_str:
+            continue # اکانت‌های بدون زمان انقضا نادیده گرفته می‌شوند
+            
+        expire_dt = parse_iso_date(expire_str)
+        if not expire_dt:
+            continue
+            
+        # اگر کاربر دیس‌ایبل است اما هنوز تاریخ انقضایش نرسیده، نادیده بگیر
+        if target_status == 'DISABLED' and expire_dt > now_utc:
+            continue
+            
+        # فیلتر زمان
+        if hours > 0:
+            threshold = now_utc - timedelta(hours=hours)
+            if expire_dt <= threshold:
+                uuids_to_delete.append(user.get('uuid'))
+        else: # hours == 0
+            if target_status == 'EXPIRED':
+                uuids_to_delete.append(user.get('uuid'))
+            elif target_status == 'DISABLED':
+                if expire_dt <= now_utc:
+                    uuids_to_delete.append(user.get('uuid'))
+                    
+    if not uuids_to_delete:
+        await wait_message.edit_text(
+            t('no_users_to_cleanup', context),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])
+        )
+        return ConversationHandler.END
+        
+    context.user_data['cleanup_uuids'] = uuids_to_delete
+    msg_key = 'confirm_cleanup_prompt' if hours > 0 else 'confirm_cleanup_prompt_zero'
+    text = t(msg_key, context, count=len(uuids_to_delete), status=target_status, hours=hours)
+    
+    keyboard = [
+        [InlineKeyboardButton(t('confirm_btn', context), callback_data='confirm_cleanup_action')],
+        [InlineKeyboardButton(t('cancel_btn', context), callback_data='cancel_cleanup_action')]
+    ]
+    
+    await wait_message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+    return CONFIRM_CLEANUP
+
+async def confirm_cleanup_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == 'cancel_cleanup_action':
+        await query.message.edit_text("عملیات پاکسازی لغو شد.")
+        return await start(query, context)
+        
+    uuids = context.user_data.get('cleanup_uuids', [])
+    if not uuids:
+        return await start(query, context)
+        
+    await query.message.edit_text("⏳ در حال پاکسازی گروهی در دیتابیس پنل...")
+    
+    # ارسال لیست به صورت دسته‌های 500 تایی برای جلوگیری از ارور حجم ریکوست
+    batch_size = 500
+    success_count = 0
+    has_error = False
+    error_msg = ""
+    
+    for i in range(0, len(uuids), batch_size):
+        batch = uuids[i:i + batch_size]
+        payload = {"uuids": batch}
+        _, error = await asyncio.to_thread(api_request, 'POST', '/api/users/bulk/delete', payload=payload)
+        
+        if error:
+            has_error = True
+            error_msg = error
+            break
+        success_count += len(batch)
+        
+    if has_error:
+        await query.message.edit_text(
+            t('cleanup_failed', context, error=html.escape(error_msg)),
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])
+        )
+    else:
+        await query.message.edit_text(
+            t('cleanup_success', context, count=success_count),
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])
+        )
+        
+    return ConversationHandler.END
+# --- End of Smart Cleanup Feature ---
 
 def main() -> None:
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
@@ -1722,6 +1872,9 @@ def main() -> None:
                 CallbackQueryHandler(expiring_users_handler, pattern=r'^expiring_'),
                 CallbackQueryHandler(show_expiring_users_menu, pattern=r'^go_expiring_users$')
             ],
+            SELECT_CLEANUP_GROUP: [CallbackQueryHandler(cleanup_menu_handler, pattern='^cleanup_')],
+            AWAITING_CLEANUP_HOURS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_cleanup_hours)],
+            CONFIRM_CLEANUP: [CallbackQueryHandler(confirm_cleanup_action_handler, pattern='^(confirm|cancel)_cleanup_action$')],
         },
         fallbacks=[
             CommandHandler('start', start),
