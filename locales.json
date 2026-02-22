@@ -162,7 +162,17 @@
     "onhold_info": "💡 <b>قابلیت On-Hold چیست؟</b>\nبا فعال‌سازی این گزینه، تاریخ انقضای کاربر از لحظه <b>اولین اتصال</b> محاسبه خواهد شد. (مناسب برای اکانت‌های رزرو)",
     "onhold_activated": "✅ قابلیت On-Hold فعال شد.",
     "onhold_deactivated": "❌ قابلیت On-Hold غیرفعال شد.",
-	"onhold_notification": "🚀 کاربر <b>{username}</b> متصل شد!\n\nزمان اتصال: {conn_time}\nاعتبار فعال شده: {days} روز"
+	"onhold_notification": "🚀 کاربر <b>{username}</b> متصل شد!\n\nزمان اتصال: {conn_time}\nاعتبار فعال شده: {days} روز",
+	"smart_cleanup_btn": "🧹 پاکسازی هوشمند",
+    "cleanup_menu_prompt": "✨ لطفاً گروهی که قصد پاکسازی آن را دارید انتخاب کنید:",
+    "cleanup_expired_btn": "🔴 منقضی شده‌ها (EXPIRED)",
+    "cleanup_disabled_btn": "🚫 غیرفعال‌ها (DISABLED)",
+    "ask_for_cleanup_hours": "لطفاً مشخص کنید باید <b>چند ساعت</b> از زمان انقضای این کاربران گذشته باشد؟\n\n(برای حذف بدون در نظر گرفتن زمان، عدد 0 را وارد کنید)",
+    "confirm_cleanup_prompt": "⚠️ <b>اخطار!</b>\nتعداد <b>{count}</b> کاربر با وضعیت <b>{status}</b> پیدا شد که بیش از <b>{hours}</b> ساعت از انقضای آن‌ها گذشته است.\nآیا از حذف گروهی و دائمی آن‌ها مطمئن هستید؟",
+    "confirm_cleanup_prompt_zero": "⚠️ <b>اخطار!</b>\nتعداد <b>{count}</b> کاربر با وضعیت <b>{status}</b> و منقضی شده پیدا شد.\nآیا از حذف گروهی و دائمی آن‌ها مطمئن هستید؟",
+    "no_users_to_cleanup": "ℹ️ هیچ کاربری با این شرایط برای پاکسازی یافت نشد.",
+    "cleanup_success": "✅ پاکسازی با موفقیت انجام شد.\n<b>{count}</b> کاربر حذف شدند.",
+    "cleanup_failed": "❌ خطا در پاکسازی کاربران:\n<code>{error}</code>"
   },
   "en": {
     "hwid_limit": "⚙️ <b>HWID Limit:</b>",
@@ -327,7 +337,17 @@
     "onhold_info": "💡 <b>What is On-Hold?</b>\nIf enabled, the expiration date will be calculated from the moment of the <b>first connection</b>.",
     "onhold_activated": "✅ On-Hold enabled.",
     "onhold_deactivated": "❌ On-Hold disabled.",
-	"onhold_notification": "🚀 User <b>{username}</b> connected!\n\nConnection time: {conn_time}\nActivated duration: {days} days"
+	"onhold_notification": "🚀 User <b>{username}</b> connected!\n\nConnection time: {conn_time}\nActivated duration: {days} days",
+	"smart_cleanup_btn": "🧹 Smart Cleanup",
+    "cleanup_menu_prompt": "✨ Please select the group you want to clean up:",
+    "cleanup_expired_btn": "🔴 Expired Users (EXPIRED)",
+    "cleanup_disabled_btn": "🚫 Disabled Users (DISABLED)",
+    "ask_for_cleanup_hours": "Please specify <b>how many hours</b> should have passed since their expiration?\n\n(Enter 0 to delete regardless of time)",
+    "confirm_cleanup_prompt": "⚠️ <b>WARNING!</b>\nFound <b>{count}</b> users with <b>{status}</b> status that expired more than <b>{hours}</b> hours ago.\nAre you sure you want to permanently delete them?",
+    "confirm_cleanup_prompt_zero": "⚠️ <b>WARNING!</b>\nFound <b>{count}</b> expired users with <b>{status}</b> status.\nAre you sure you want to permanently delete them?",
+    "no_users_to_cleanup": "ℹ️ No users found matching these criteria.",
+    "cleanup_success": "✅ Cleanup completed successfully.\n<b>{count}</b> users were deleted.",
+    "cleanup_failed": "❌ Error during cleanup:\n<code>{error}</code>"
   },
   "ru": {
     "hwid_limit": "⚙️ <b>Лимит HWID:</b>",
@@ -492,6 +512,16 @@
     "onhold_info": "💡 <b>Что такое On-Hold?</b>\nЕсли включено, срок действия будет рассчитываться с момента <b>первого подключения</b>.",
     "onhold_activated": "✅ On-Hold включен.",
     "onhold_deactivated": "❌ On-Hold отключен.",
-	"onhold_notification": "🚀 Пользователь <b>{username}</b> подключился!\n\nВремя подключения: {conn_time}\nАктивированный период: {days} дн."
+	"onhold_notification": "🚀 Пользователь <b>{username}</b> подключился!\n\nВремя подключения: {conn_time}\nАктивированный период: {days} дн.",
+	"smart_cleanup_btn": "🧹 Умная очистка",
+    "cleanup_menu_prompt": "✨ Пожалуйста, выберите группу для очистки:",
+    "cleanup_expired_btn": "🔴 Истекшие (EXPIRED)",
+    "cleanup_disabled_btn": "🚫 Отключенные (DISABLED)",
+    "ask_for_cleanup_hours": "Пожалуйста, укажите, <b>сколько часов</b> должно пройти с момента истечения срока?\n\n(Введите 0 для удаления без учета времени)",
+    "confirm_cleanup_prompt": "⚠️ <b>ВНИМАНИЕ!</b>\nНайдено <b>{count}</b> пользователей со статусом <b>{status}</b>, срок действия которых истек более <b>{hours}</b> часов назад.\nУдалить их навсегда?",
+    "confirm_cleanup_prompt_zero": "⚠️ <b>ВНИМАНИЕ!</b>\nНайдено <b>{count}</b> истекших пользователей со статусом <b>{status}</b>.\nУдалить их навсегда?",
+    "no_users_to_cleanup": "ℹ️ Пользователи, соответствующие этим критериям, не найдены.",
+    "cleanup_success": "✅ Очистка успешно завершена.\nУдалено <b>{count}</b> пользователей.",
+    "cleanup_failed": "❌ Ошибка при очистке:\n<code>{error}</code>"
   }
 }
