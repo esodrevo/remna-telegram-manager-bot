@@ -1657,7 +1657,7 @@ async def expiring_users_handler(update: Update, context: ContextTypes.DEFAULT_T
         file_content = "\n".join(file_lines)
         report_file = io.BytesIO(file_content.encode('utf-8'))
         await context.bot.send_document(
-            chat_id=query.effective_chat.id,
+            chat_id=update.effective_chat.id,
             document=report_file,
             filename=f'expiring_users_{period_key_map[days_offset]}.txt',
             caption=t('expiring_users_report_title', context, period=period_text)
