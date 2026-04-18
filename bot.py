@@ -178,9 +178,18 @@ def generate_qr_code(data: str):
     img.save(buf, 'PNG'); buf.seek(0)
     return buf.getvalue()
 
-def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE):
+def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE, sub_history_data: dict = None):
     safe_username = html.escape(user_data.get('username') or 'N/A')
-    safe_client_app = html.escape(user_data.get('subLastUserAgent') or t('unknown', context))
+    
+    # گرفتن نرم‌افزار (User Agent) از تاریخچه
+    client_app_name = t('unknown', context)
+    if sub_history_data and sub_history_data.get('userAgent'):
+        client_app_name = sub_history_data.get('userAgent')
+        # اگر نام کلاینت خیلی طولانی بود، کوتاه شود
+        if len(client_app_name) > 30:
+            client_app_name = client_app_name[:30] + "..."
+    safe_client_app = html.escape(client_app_name)
+    
     safe_sub_url = html.escape(user_data.get('subscriptionUrl') or t('not_found', context))
 
     data_limit = user_data.get('trafficLimitBytes')
@@ -214,7 +223,10 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE)
             days = time_diff.days; hours = time_diff.seconds // 3600
             remaining_days = f"{days} {t('days_unit', context)} {t('and_conjunction', context)} {hours} {t('hours_unit', context)}"
         else: remaining_days = t('expired', context)
-    sub_last_update_dt = parse_iso_date(user_data.get('subLastOpenedAt'))
+        
+    # گرفتن زمان آخرین آپدیت سابسکریپشن از تاریخچه
+    last_update_str = sub_history_data.get('requestAt') if sub_history_data else None
+    sub_last_update_dt = parse_iso_date(last_update_str)
     last_update_relative = human_readable_timediff(sub_last_update_dt, context)
 
     hwid_limit = user_data.get('hwidDeviceLimit', 0)
@@ -1161,13 +1173,35 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data['username'] = username_to_fetch
     sent_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('fetching_user_info', context, username=username_to_fetch), parse_mode=ParseMode.HTML)
     
+    # 1. گرفتن اطلاعات اصلی کاربر
     data, error = await asyncio.to_thread(api_request, 'GET', f'/api/users/by-username/{username_to_fetch}')
 
     if error:
         await sent_message.edit_text(t('error_fetching', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])); return AWAITING_USERNAME
-    user_data = data.get('response', {});
-    context.user_data['user_data'] = user_data; context.user_data['user_uuid'] = user_data.get('uuid')
-    message_text = build_user_info_message(user_data, context)
+    
+    user_data = data.get('response', {})
+    context.user_data['user_data'] = user_data
+    user_uuid = user_data.get('uuid')
+    context.user_data['user_uuid'] = user_uuid
+
+    # 2. گرفتن تاریخچه آخرین آپدیت سابسکریپشن از API جدید
+    sub_history_data = None
+    if user_uuid:
+         # فقط ردیف اول را می‌خواهیم (جدیدترین) که مربوط به همین کاربر باشد
+         # دقت کنید در API جدید، فیلتر با یوزر آیدی در داکیومنت نیست، اما معمولاً پنل‌ها اجازه فیلتر می‌دهند یا باید همه را بگیریم و فیلتر کنیم.
+         # فرض می‌کنیم متد جستجو یا فیلتر پشتیبانی نمی‌شود، پس فعلا 100 رکورد آخر کل سیستم را می‌گیریم
+         history_response, _ = await asyncio.to_thread(api_request, 'GET', '/api/subscription-request-history', params={'start': 0, 'size': 100})
+         
+         if history_response and 'response' in history_response:
+             records = history_response['response'].get('records', [])
+             # جستجوی آخرین درخواستی که متعلق به این کاربر است
+             for record in records:
+                 if record.get('userUuid') == user_uuid:
+                     sub_history_data = record
+                     break
+
+    # پاس دادن اطلاعات تاریخچه به تابع سازنده پیام
+    message_text = build_user_info_message(user_data, context, sub_history_data)
 
     enable_disable_button = InlineKeyboardButton(t('disable_user_btn', context), callback_data='disable_user') \
         if user_data.get('status') == 'ACTIVE' \
