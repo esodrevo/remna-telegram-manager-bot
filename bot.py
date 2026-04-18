@@ -169,6 +169,34 @@ async def api_request_get_all_users():
     final_response_structure = {'response': {'users': all_users}}
     return final_response_structure, None
 
+async def api_request_get_sub_history(start=0, size=100):
+    """دریافت صفحات تاریخچه سابسکریپشن"""
+    params = {'start': start, 'size': size}
+    data, error = await asyncio.to_thread(api_request, 'GET', '/api/subscription-request-history', params=params)
+    return data, error
+
+async def get_user_latest_sub_history(user_uuid: str):
+    """
+    پیدا کردن آخرین لاگ آپدیت برای یک کاربر خاص.
+    برای جلوگیری از کند شدن ربات در پنل‌های شلوغ، نهایتاً 1000 رکورد آخر را چک می‌کنیم.
+    """
+    start = 0
+    size = 100
+    for _ in range(10): # بررسی حداکثر 10 صفحه (1000 رکورد اخیر)
+        data, error = await api_request_get_sub_history(start=start, size=size)
+        if error or not data or 'response' not in data:
+            break
+        
+        records = data['response'].get('records', [])
+        if not records:
+            break
+            
+        for rec in records:
+            if rec.get('userUuid') == user_uuid:
+                return rec # اولین موردی که پیدا شد (چون لاگ‌ها معمولاً از جدید به قدیم هستند)
+                
+        start += size
+    return None
 
 def generate_qr_code(data: str):
     if not data: return None
@@ -178,18 +206,9 @@ def generate_qr_code(data: str):
     img.save(buf, 'PNG'); buf.seek(0)
     return buf.getvalue()
 
-def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE, sub_history_data: dict = None):
+def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE):
     safe_username = html.escape(user_data.get('username') or 'N/A')
-    
-    # گرفتن نرم‌افزار (User Agent) از تاریخچه
-    client_app_name = t('unknown', context)
-    if sub_history_data and sub_history_data.get('userAgent'):
-        client_app_name = sub_history_data.get('userAgent')
-        # اگر نام کلاینت خیلی طولانی بود، کوتاه شود
-        if len(client_app_name) > 30:
-            client_app_name = client_app_name[:30] + "..."
-    safe_client_app = html.escape(client_app_name)
-    
+    safe_client_app = html.escape(user_data.get('subLastUserAgent') or t('unknown', context))
     safe_sub_url = html.escape(user_data.get('subscriptionUrl') or t('not_found', context))
 
     data_limit = user_data.get('trafficLimitBytes')
@@ -223,10 +242,7 @@ def build_user_info_message(user_data: dict, context: ContextTypes.DEFAULT_TYPE,
             days = time_diff.days; hours = time_diff.seconds // 3600
             remaining_days = f"{days} {t('days_unit', context)} {t('and_conjunction', context)} {hours} {t('hours_unit', context)}"
         else: remaining_days = t('expired', context)
-        
-    # گرفتن زمان آخرین آپدیت سابسکریپشن از تاریخچه
-    last_update_str = sub_history_data.get('requestAt') if sub_history_data else None
-    sub_last_update_dt = parse_iso_date(last_update_str)
+    sub_last_update_dt = parse_iso_date(user_data.get('subLastOpenedAt'))
     last_update_relative = human_readable_timediff(sub_last_update_dt, context)
 
     hwid_limit = user_data.get('hwidDeviceLimit', 0)
@@ -667,33 +683,64 @@ async def process_hours_and_fetch_users(update: Update, context: ContextTypes.DE
     except BadRequest:
         pass
         
-    wait_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('fetching_updated_users', context))
+    wait_message = await context.bot.send_message(chat_id=update.effective_chat.id, text="⏳ در حال استخراج لاگ‌های سابسکریپشن...")
 
+    # ۱. گرفتن لیست یوزرها برای مپ کردن UUID به Username
     all_users_response, error = await api_request_get_all_users()
-    
     if error:
         await wait_message.edit_text(t('error_fetching_all_users', context, error=error))
         return ConversationHandler.END
 
     all_users_list = all_users_response.get('response', {}).get('users', [])
+    uuid_to_username = {u.get('uuid'): u.get('username') for u in all_users_list if u.get('uuid')}
+
+    # ۲. فیلتر زمان
     now_utc = datetime.now(timezone.utc)
     time_threshold = now_utc - timedelta(hours=hours)
     
+    active_uuids = set()
+    start = 0
+    size = 100
+    fetch_more = True
+
+    # ۳. جستجو در لاگ‌های سابسکریپشن تا رسیدن به زمان مشخص شده
+    while fetch_more:
+        history_data, h_error = await api_request_get_sub_history(start=start, size=size)
+        if h_error or not history_data or 'response' not in history_data:
+            break
+            
+        records = history_data['response'].get('records', [])
+        if not records:
+            break
+
+        for rec in records:
+            req_at_str = rec.get('requestAt')
+            if not req_at_str: continue
+            
+            req_dt = parse_iso_date(req_at_str)
+            if not req_dt: continue
+            
+            # اگر زمان درخواست جدیدتر از حد مشخص شده (N ساعت) است
+            if req_dt >= time_threshold:
+                user_uuid = rec.get('userUuid')
+                if user_uuid:
+                    active_uuids.add(user_uuid)
+            else:
+                # چون لاگ‌ها نزولی مرتب شده‌اند، وقتی به دیتای قدیمی‌تر رسیدیم جستجو را متوقف می‌کنیم
+                fetch_more = False
+                break
+                
+        start += size
+
+    # ۴. دسته‌بندی نهایی کاربران
     updated_users = []
     inactive_users = []
     
-    for user in all_users_list:
-        username = user.get('username')
-        if not username: continue
-        
-        last_opened_str = user.get('subLastOpenedAt')
-        if last_opened_str:
-            last_opened_dt = parse_iso_date(last_opened_str)
-            if last_opened_dt and last_opened_dt >= time_threshold:
-                updated_users.append(username)
-                continue
-        
-        inactive_users.append(username)
+    for u_uuid, uname in uuid_to_username.items():
+        if u_uuid in active_uuids:
+            updated_users.append(uname)
+        else:
+            inactive_users.append(uname)
 
     updated_users.sort()
     inactive_users.sort()
@@ -709,24 +756,17 @@ async def process_hours_and_fetch_users(update: Update, context: ContextTypes.DE
                      hours=hours)
     
     keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
-    
     await wait_message.edit_text(summary_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
+    # ۵. تولید و ارسال فایل گزارش
     report_content = ""
     report_content += f"--- {t('updated_list_header', context)} ({len(updated_users)}) ---\n"
-    if updated_users:
-        report_content += "\n".join(updated_users)
-    else:
-        report_content += "-\n"
+    report_content += "\n".join(updated_users) if updated_users else "-\n"
         
     report_content += f"\n\n--- {t('inactive_list_header', context)} ({len(inactive_users)}) ---\n"
-    if inactive_users:
-        report_content += "\n".join(inactive_users)
-    else:
-        report_content += "-\n"
+    report_content += "\n".join(inactive_users) if inactive_users else "-\n"
 
     report_file = io.BytesIO(report_content.encode('utf-8'))
-    
     await context.bot.send_document(
         chat_id=update.effective_chat.id,
         document=report_file,
@@ -1173,35 +1213,27 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data['username'] = username_to_fetch
     sent_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('fetching_user_info', context, username=username_to_fetch), parse_mode=ParseMode.HTML)
     
-    # 1. گرفتن اطلاعات اصلی کاربر
     data, error = await asyncio.to_thread(api_request, 'GET', f'/api/users/by-username/{username_to_fetch}')
 
     if error:
         await sent_message.edit_text(t('error_fetching', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])); return AWAITING_USERNAME
-    
     user_data = data.get('response', {})
-    context.user_data['user_data'] = user_data
     user_uuid = user_data.get('uuid')
+    
+    # +++ بخش جدید: تزریق اطلاعات تاریخچه سابسکریپشن به دیتای کاربر +++
+    latest_history = await get_user_latest_sub_history(user_uuid)
+    if latest_history:
+        user_data['subLastUserAgent'] = latest_history.get('userAgent')
+        user_data['subLastOpenedAt'] = latest_history.get('requestAt')
+    else:
+        # اگر در رکوردهای اخیر لاگی نبود
+        user_data['subLastUserAgent'] = None
+        user_data['subLastOpenedAt'] = None
+    # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+    context.user_data['user_data'] = user_data
     context.user_data['user_uuid'] = user_uuid
-
-    # 2. گرفتن تاریخچه آخرین آپدیت سابسکریپشن از API جدید
-    sub_history_data = None
-    if user_uuid:
-         # فقط ردیف اول را می‌خواهیم (جدیدترین) که مربوط به همین کاربر باشد
-         # دقت کنید در API جدید، فیلتر با یوزر آیدی در داکیومنت نیست، اما معمولاً پنل‌ها اجازه فیلتر می‌دهند یا باید همه را بگیریم و فیلتر کنیم.
-         # فرض می‌کنیم متد جستجو یا فیلتر پشتیبانی نمی‌شود، پس فعلا 100 رکورد آخر کل سیستم را می‌گیریم
-         history_response, _ = await asyncio.to_thread(api_request, 'GET', '/api/subscription-request-history', params={'start': 0, 'size': 100})
-         
-         if history_response and 'response' in history_response:
-             records = history_response['response'].get('records', [])
-             # جستجوی آخرین درخواستی که متعلق به این کاربر است
-             for record in records:
-                 if record.get('userUuid') == user_uuid:
-                     sub_history_data = record
-                     break
-
-    # پاس دادن اطلاعات تاریخچه به تابع سازنده پیام
-    message_text = build_user_info_message(user_data, context, sub_history_data)
+    message_text = build_user_info_message(user_data, context)
 
     enable_disable_button = InlineKeyboardButton(t('disable_user_btn', context), callback_data='disable_user') \
         if user_data.get('status') == 'ACTIVE' \
