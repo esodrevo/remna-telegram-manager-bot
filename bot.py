@@ -36,8 +36,12 @@ COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("st
     AWAITING_BULK_VALUE, CONFIRM_BULK_ACTION, AWAITING_HOURS_FOR_UPDATED_LIST,
     SELECT_BULK_HWID_ACTION, AWAITING_BULK_HWID_VALUE, AWAITING_TIMEZONE_SETTING,
     EXPIRING_USERS_MENU, AWAITING_HWID_EDIT, USER_CREATED_MENU, SELECTING_ONHOLD,
-    SELECT_CLEANUP_GROUP, AWAITING_CLEANUP_HOURS, CONFIRM_CLEANUP
-) = range(31)
+    SELECT_CLEANUP_GROUP, AWAITING_CLEANUP_HOURS, CONFIRM_CLEANUP,
+    # === NEW STATES FOR BULK CREATE ===
+    AWAITING_BULK_COUNT, AWAITING_BULK_PATTERN, AWAITING_BULK_DATA_LIMIT,
+    AWAITING_BULK_EXPIRE_DAYS, SELECTING_BULK_INTERNAL_SQUADS, SELECTING_BULK_EXTERNAL_SQUAD,
+    SELECTING_BULK_HWID_OPTION, AWAITING_BULK_HWID_VALUE_STEP, SELECTING_BULK_BANNER
+) = range(40)
 
 
 def get_settings() -> dict:
@@ -297,6 +301,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         [InlineKeyboardButton(t('restart_nodes_btn', context), callback_data='go_restart_nodes'),
          InlineKeyboardButton(t('view_logs_btn', context), callback_data='go_view_logs')],
         [InlineKeyboardButton(t('edit_all_users_btn', context), callback_data='go_edit_all_users')],
+        [InlineKeyboardButton(t('bulk_create_btn', context), callback_data='go_bulk_create')],
         [InlineKeyboardButton(t('updated_users_btn', context), callback_data='go_updated_users'),
          InlineKeyboardButton(t('expiring_users_btn', context), callback_data='go_expiring_users')],
         [InlineKeyboardButton(t('set_expire_time_btn', context), callback_data='go_set_expire_time'),
@@ -347,6 +352,49 @@ def get_creation_date(user: dict):
         return datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
     except ValueError:
         return datetime.min.replace(tzinfo=timezone.utc)
+        
+async def get_bulk_suggestions_text(context: ContextTypes.DEFAULT_TYPE) -> str:
+    users_data, error = await api_request_get_all_users()
+    if error or not users_data:
+        return ""
+    
+    all_users = users_data.get('response', {}).get('users', [])
+    if not all_users:
+        return ""
+
+    ext_data, ext_err = await asyncio.to_thread(api_request, 'GET', '/api/external-squads')
+    squad_names = {}
+    if not ext_err and ext_data:
+        for sq in ext_data.get('response', {}).get('externalSquads', []):
+            squad_names[sq['uuid']] = sq['name']
+
+    latest_per_squad = {} 
+
+    for u in all_users:
+        ext_list = u.get('activeExternalSquads', [])
+        squad_key = ext_list[0] if ext_list else None
+        
+        current_latest = latest_per_squad.get(squad_key)
+        if not current_latest or get_creation_date(u) > get_creation_date(current_latest):
+            latest_per_squad[squad_key] = u
+
+    lines = []
+    
+    no_ext_user = latest_per_squad.get(None)
+    if no_ext_user:
+        label = t('last_no_ext_label', context)
+        lines.append(f"• <code>{html.escape(no_ext_user['username'])}</code> {label}")
+
+    for sq_uuid, user in latest_per_squad.items():
+        if sq_uuid is None: continue
+        squad_name = squad_names.get(sq_uuid, "Unknown")
+        label = t('last_with_ext_label', context, squad=squad_name)
+        lines.append(f"• <code>{html.escape(user['username'])}</code> {label}")
+
+    if not lines:
+        return ""
+        
+    return t('bulk_suggestions_title', context) + "\n".join(lines)
 
 async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer(); action = query.data
@@ -405,6 +453,19 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return AWAITING_TIMEZONE_SETTING
     if action == 'go_edit_all_users':
         return await show_edit_all_users_menu(update, context)
+        
+    if action == 'go_bulk_create':
+        await query.message.edit_text("⏳ در حال دریافت آخرین آمار یوزرها...")
+        
+        suggestions = await get_bulk_suggestions_text(context)
+        context.user_data['bulk_data'] = {}
+        
+        full_text = t('ask_bulk_count', context) + suggestions
+        
+        prompt_message = await query.message.edit_text(full_text, parse_mode=ParseMode.HTML)
+        context.user_data['prompt_message_id'] = prompt_message.message_id
+        return AWAITING_BULK_COUNT
+        
     if action == 'go_expiring_users':
         return await show_expiring_users_menu(update, context)
     
@@ -1881,6 +1942,350 @@ async def confirm_cleanup_action_handler(update: Update, context: ContextTypes.D
     return ConversationHandler.END
 # --- End of Smart Cleanup Feature ---
 
+# --- Start of Bulk Create Feature ---
+
+async def get_bulk_count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        count = int(update.message.text)
+        if count <= 0: raise ValueError
+        context.user_data['bulk_data']['count'] = count
+        await update.message.delete()
+        
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=context.user_data.get('prompt_message_id'),
+            text=t('ask_bulk_pattern', context),
+            parse_mode=ParseMode.HTML
+        )
+        return AWAITING_BULK_PATTERN
+    except (ValueError, TypeError):
+        msg = await update.message.reply_text(t('invalid_number', context))
+        context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
+        return AWAITING_BULK_COUNT
+
+async def get_bulk_pattern(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    await update.message.delete()
+    
+    match = re.match(r'^(.+?)\((\d+)\)$', text)
+    if not match:
+        msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=t('invalid_bulk_pattern', context), parse_mode=ParseMode.HTML)
+        context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 6)
+        return AWAITING_BULK_PATTERN
+        
+    prefix, start_num_str = match.groups()
+    context.user_data['bulk_data']['prefix'] = prefix
+    context.user_data['bulk_data']['start_num'] = int(start_num_str)
+    
+    await context.bot.edit_message_text(
+        chat_id=update.effective_chat.id,
+        message_id=context.user_data.get('prompt_message_id'),
+        text=t('ask_for_data_limit', context),
+        parse_mode=ParseMode.HTML
+    )
+    return AWAITING_BULK_DATA_LIMIT
+
+async def get_bulk_data_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        limit_gb = int(update.message.text)
+        if limit_gb < 0: raise ValueError
+        context.user_data['bulk_data']['trafficLimitBytes'] = limit_gb * (1024**3)
+        context.user_data['bulk_data']['is_onhold'] = False
+        await update.message.delete()
+        return await show_bulk_expire_days_prompt(update, context)
+    except (ValueError, TypeError):
+        msg = await update.message.reply_text(t('invalid_number', context))
+        context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
+        return AWAITING_BULK_DATA_LIMIT
+
+async def show_bulk_expire_days_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    onhold_status = "✅" if context.user_data['bulk_data'].get('is_onhold') else "❌"
+    keyboard = [[InlineKeyboardButton(t('onhold_btn', context, status=onhold_status), callback_data='bulk_onhold_toggle')]]
+    text = f"{t('ask_for_expire_days', context)}\n\n{t('onhold_info', context)}"
+    
+    await context.bot.edit_message_text(
+        chat_id=update.effective_chat.id,
+        message_id=context.user_data.get('prompt_message_id'),
+        text=text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.HTML
+    )
+    return AWAITING_BULK_EXPIRE_DAYS
+
+async def bulk_onhold_toggle_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    current = context.user_data['bulk_data'].get('is_onhold', False)
+    context.user_data['bulk_data']['is_onhold'] = not current
+    return await show_bulk_expire_days_prompt(update, context)
+
+async def get_bulk_expire_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        days = int(update.message.text)
+        if days <= 0: raise ValueError
+        context.user_data['bulk_data']['expire_days_count'] = days
+        await update.message.delete()
+        
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=context.user_data.get('prompt_message_id'),
+            text=t('fetching_squads_prompt', context)
+        )
+        return await fetch_and_show_bulk_internal_squads(update, context)
+    except (ValueError, TypeError):
+        msg = await update.message.reply_text(t('invalid_number', context))
+        context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
+        return AWAITING_BULK_EXPIRE_DAYS
+
+async def fetch_and_show_bulk_internal_squads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    squads_data, error = await asyncio.to_thread(api_request, 'GET', '/api/internal-squads')
+    
+    if error or not squads_data or 'response' not in squads_data:
+        await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=context.user_data.get('prompt_message_id'), text=t('fetching_squads_error', context))
+        return MAIN_MENU
+        
+    context.user_data['available_squads'] = squads_data['response'].get('internalSquads', [])
+    context.user_data['selected_squads'] = set() 
+
+    keyboard = build_squad_keyboard(context)
+    
+    keyboard[-1] = [InlineKeyboardButton(t('done_squad_selection_btn', context), callback_data='bulk_internal_done')]
+    
+    await context.bot.edit_message_text(
+        chat_id=update.effective_chat.id,
+        message_id=context.user_data.get('prompt_message_id'),
+        text=t('select_squads_prompt', context),
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return SELECTING_BULK_INTERNAL_SQUADS
+
+async def bulk_internal_squad_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    action = query.data
+    
+    if action == 'bulk_internal_done':
+        context.user_data['bulk_data']['internal_squads'] = list(context.user_data.get('selected_squads', []))
+        return await fetch_and_show_bulk_external_squads(update, context)
+        
+    squad_uuid = action.split('_', 1)[1]
+    selected_squads = context.user_data.get('selected_squads', set())
+    
+    if squad_uuid in selected_squads: selected_squads.remove(squad_uuid)
+    else: selected_squads.add(squad_uuid)
+        
+    context.user_data['selected_squads'] = selected_squads
+    keyboard = build_squad_keyboard(context)
+    keyboard[-1] = [InlineKeyboardButton(t('done_squad_selection_btn', context), callback_data='bulk_internal_done')]
+    try: await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+    except BadRequest: pass
+    return SELECTING_BULK_INTERNAL_SQUADS
+
+async def fetch_and_show_bulk_external_squads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.message.edit_text("⏳ Fetching External Squads...")
+    
+    data, error = await asyncio.to_thread(api_request, 'GET', '/api/external-squads')
+    external_squads = data.get('response', {}).get('externalSquads', []) if not error and data else []
+    
+    keyboard = []
+    for sq in external_squads:
+        keyboard.append([InlineKeyboardButton(sq['name'], callback_data=f"extsq_{sq['uuid']}")])
+    keyboard.append([InlineKeyboardButton(t('external_none_btn', context), callback_data="extsq_none")])
+    
+    await query.message.edit_text(
+        text=t('bulk_select_external_prompt', context),
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.HTML
+    )
+    return SELECTING_BULK_EXTERNAL_SQUAD
+
+async def bulk_external_squad_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    sq_uuid = query.data.split('_', 1)[1]
+    
+    if sq_uuid == "none":
+        context.user_data['bulk_data']['external_squad'] = None
+        # درخواست HWID
+        keyboard = [
+            [InlineKeyboardButton(t('enable_hwid_btn', context), callback_data='bulk_hwid_enable')],
+            [InlineKeyboardButton(t('disable_hwid_btn', context), callback_data='bulk_hwid_disable')]
+        ]
+        await query.message.edit_text(t('ask_hwid_limit_prompt', context), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        return SELECTING_BULK_HWID_OPTION
+    else:
+        context.user_data['bulk_data']['external_squad'] = sq_uuid
+        context.user_data['bulk_data']['hwidDeviceLimit'] = 0
+        return await show_bulk_banner_selection(update, context)
+
+async def bulk_hwid_option_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    action = query.data
+
+    if action == 'bulk_hwid_disable':
+        context.user_data['bulk_data']['hwidDeviceLimit'] = 0
+        return await show_bulk_banner_selection(update, context)
+    elif action == 'bulk_hwid_enable':
+        await query.message.edit_text(t('ask_for_hwid_value', context))
+        return AWAITING_BULK_HWID_VALUE_STEP
+
+async def get_bulk_hwid_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        limit = int(update.message.text)
+        if limit <= 0: raise ValueError
+        context.user_data['bulk_data']['hwidDeviceLimit'] = limit
+        await update.message.delete()
+        
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=context.user_data.get('prompt_message_id'),
+            text="⏳"
+        )
+        
+        fake_update = update
+        fake_update.callback_query = type('obj', (object,), {'message': type('obj', (object,), {'edit_text': lambda text, reply_markup, parse_mode: context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=context.user_data.get('prompt_message_id'), text=text, reply_markup=reply_markup, parse_mode=parse_mode)})})
+        return await show_bulk_banner_selection(fake_update, context)
+    except (ValueError, TypeError):
+        msg = await update.message.reply_text(t('invalid_number', context))
+        context.job_queue.run_once(lambda ctx: ctx.bot.delete_message(msg.chat_id, msg.message_id), 5)
+        return AWAITING_BULK_HWID_VALUE_STEP
+
+async def show_bulk_banner_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    keyboard = [
+        [InlineKeyboardButton(t('btn_happ_banner', context), callback_data='bulk_banner_happ')],
+        [InlineKeyboardButton(t('btn_sub_banner', context), callback_data='bulk_banner_sub')],
+        [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]
+    ]
+    
+    msg_text = "✨ لطفاً نوع بنر برای اکانت‌های گروهی را انتخاب کنید:"
+    
+    if update.callback_query and hasattr(update.callback_query.message, 'edit_text'):
+        await update.callback_query.message.edit_text(text=msg_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    else:
+        await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=context.user_data.get('prompt_message_id'), text=msg_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    
+    return SELECTING_BULK_BANNER
+
+async def start_bulk_creation_process(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    banner_type = query.data.split('_')[2] # happ or sub
+    context.user_data['bulk_data']['banner_type'] = banner_type
+    
+    count = context.user_data['bulk_data']['count']
+    await query.message.edit_text(t('bulk_creation_started', context, count=count), parse_mode=ParseMode.HTML)
+    
+    task_data = {
+        'bot': context.bot,
+        'chat_id': update.effective_chat.id,
+        'lang': get_lang(context),
+        'languages_dict': LANGUAGES,
+        'bulk_data': context.user_data['bulk_data']
+    }
+    
+    asyncio.create_task(run_bulk_creation_background(task_data))
+    return ConversationHandler.END
+
+async def run_bulk_creation_background(task_data: dict):
+    bot = task_data['bot']
+    chat_id = task_data['chat_id']
+    lang = task_data['lang']
+    languages_dict = task_data['languages_dict']
+    bulk_data = task_data['bulk_data']
+    
+    def job_t(key, **kwargs):
+        return languages_dict.get(lang, languages_dict['en']).get(key, key).format(**kwargs)
+
+    count = bulk_data['count']
+    prefix = bulk_data['prefix']
+    start_num = bulk_data['start_num']
+    traffic = bulk_data['trafficLimitBytes']
+    is_onhold = bulk_data['is_onhold']
+    expire_days = bulk_data['expire_days_count']
+    hwid = bulk_data['hwidDeviceLimit']
+    internal_squads = bulk_data['internal_squads']
+    external_squad = bulk_data['external_squad']
+    banner_type = bulk_data['banner_type']
+
+    success_count = 0
+    failed_count = 0
+
+    for i in range(count):
+        current_num = start_num + i
+        username = f"{prefix}{current_num}"
+        
+        # محاسبه تاریخ
+        description = ""
+        if is_onhold:
+            description = f"onhold:{expire_days}"
+            expire_at = (datetime.now(timezone.utc) + timedelta(days=60)).isoformat().replace('+00:00', 'Z')
+        else:
+            expire_at_dt = datetime.now(timezone.utc) + timedelta(days=expire_days)
+            expire_at = expire_at_dt.replace(hour=18, minute=30, second=0, microsecond=0).isoformat().replace('+00:00', 'Z')
+
+        payload = {
+            "username": username,
+            "status": "ACTIVE",
+            "trojanPassword": generate_random_string(10),
+            "vlessUuid": str(uuid.uuid4()),
+            "ssPassword": generate_random_string(10),
+            "trafficLimitBytes": traffic,
+            "trafficLimitStrategy": "NO_RESET",
+            "expireAt": expire_at,
+            "description": description,
+            "tag": generate_random_string(8).upper(),
+            "hwidDeviceLimit": hwid,
+            "activeInternalSquads": internal_squads
+        }
+        
+        if external_squad:
+            payload["activeExternalSquads"] = [external_squad]
+
+        data, error = await asyncio.to_thread(api_request, 'POST', '/api/users', payload=payload)
+        
+        if error or not data or 'response' not in data:
+            failed_count += 1
+            continue
+
+        user_response = data['response']
+        success_count += 1
+        
+        # تولید بنر
+        limit_str = format_bytes(traffic)
+        raw_sub_link = user_response.get('subscriptionUrl', '')
+        expire_date_str = parse_iso_date(user_response.get('expireAt')).strftime("%Y/%m/%d") if user_response.get('expireAt') else "Unlimited"
+
+        final_link = raw_sub_link
+        if banner_type == 'happ':
+            enc_data, enc_error = await asyncio.to_thread(api_request, 'POST', '/api/system/tools/happ/encrypt', payload={"linkToEncrypt": raw_sub_link})
+            if not enc_error and enc_data and 'response' in enc_data:
+                final_link = enc_data['response'].get('encryptedLink', raw_sub_link)
+
+        caption = job_t('banner_caption_template', username=username, limit=limit_str, expire_date=expire_date_str, link=final_link)
+        qr_bytes = generate_qr_code(final_link)
+
+        try:
+            if qr_bytes:
+                await bot.send_photo(chat_id=chat_id, photo=qr_bytes, caption=caption, parse_mode=ParseMode.HTML)
+            else:
+                await bot.send_message(chat_id=chat_id, text=caption, parse_mode=ParseMode.HTML)
+        except Exception as e:
+            logger.error(f"Failed to send banner for {username}: {e}")
+            
+        await asyncio.sleep(1.5)
+
+    keyboard = [[InlineKeyboardButton(job_t('back_to_main_menu_btn'), callback_data='back_to_main')]]
+    await bot.send_message(
+        chat_id=chat_id, 
+        text=job_t('bulk_creation_finished', success=success_count, failed=failed_count), 
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+# --- End of Bulk Create Feature ---
+
 def main() -> None:
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     
@@ -1896,7 +2301,6 @@ def main() -> None:
             USER_MENU: [CallbackQueryHandler(user_menu_handler, pattern='^(?!back_to_user_info).*$')],
             QR_VIEW: [
                 CallbackQueryHandler(back_to_user_info_handler, pattern='^back_to_user_info$'),
-                # اضافه کردن خط زیر برای پشتیبانی از دکمه‌های صفحه‌بندی در حالت مشاهده لینک‌ها
                 CallbackQueryHandler(user_menu_handler, pattern='^show_all_links:') 
             ],
             AWAITING_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_value)],
@@ -1941,6 +2345,19 @@ def main() -> None:
             SELECT_CLEANUP_GROUP: [CallbackQueryHandler(cleanup_menu_handler, pattern='^cleanup_')],
             AWAITING_CLEANUP_HOURS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_cleanup_hours)],
             CONFIRM_CLEANUP: [CallbackQueryHandler(confirm_cleanup_action_handler, pattern='^(confirm|cancel)_cleanup_action$')],
+            # --- bulk users creat ---
+            AWAITING_BULK_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bulk_count)],
+            AWAITING_BULK_PATTERN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bulk_pattern)],
+            AWAITING_BULK_DATA_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bulk_data_limit)],
+            AWAITING_BULK_EXPIRE_DAYS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_bulk_expire_days),
+                CallbackQueryHandler(bulk_onhold_toggle_handler, pattern='^bulk_onhold_toggle$')
+            ],
+            SELECTING_BULK_INTERNAL_SQUADS: [CallbackQueryHandler(bulk_internal_squad_handler, pattern='^squad_|^bulk_internal_done$')],
+            SELECTING_BULK_EXTERNAL_SQUAD: [CallbackQueryHandler(bulk_external_squad_handler, pattern='^extsq_')],
+            SELECTING_BULK_HWID_OPTION: [CallbackQueryHandler(bulk_hwid_option_handler, pattern='^bulk_hwid_')],
+            AWAITING_BULK_HWID_VALUE_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bulk_hwid_value)],
+            SELECTING_BULK_BANNER: [CallbackQueryHandler(start_bulk_creation_process, pattern='^bulk_banner_')],
         },
         fallbacks=[
             CommandHandler('start', start),
