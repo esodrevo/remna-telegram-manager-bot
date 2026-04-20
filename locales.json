@@ -172,7 +172,18 @@
     "confirm_cleanup_prompt_zero": "⚠️ <b>اخطار!</b>\nتعداد <b>{count}</b> کاربر با وضعیت <b>{status}</b> و منقضی شده پیدا شد.\nآیا از حذف گروهی و دائمی آن‌ها مطمئن هستید؟",
     "no_users_to_cleanup": "ℹ️ هیچ کاربری با این شرایط برای پاکسازی یافت نشد.",
     "cleanup_success": "✅ پاکسازی با موفقیت انجام شد.\n<b>{count}</b> کاربر حذف شدند.",
-    "cleanup_failed": "❌ خطا در پاکسازی کاربران:\n<code>{error}</code>"
+    "cleanup_failed": "❌ خطا در پاکسازی کاربران:\n<code>{error}</code>",
+	"bulk_create_btn": "👥 ساخت گروهی (Bulk)",
+    "ask_bulk_count": "لطفاً تعداد اکانت‌هایی که می‌خواهید به صورت گروهی ساخته شوند را وارد کنید (مثلا: 10):",
+    "ask_bulk_pattern": "لطفاً فرمت نام کاربری را وارد کنید.\n\n<b>راهنما:</b> نام مورد نظر را بنویسید و عدد شروع را داخل پرانتز قرار دهید.\nمثال: اگر <code>large(2390)</code> را وارد کنید، اکانت‌های large2390 و large2391 و ... ساخته می‌شوند.",
+    "invalid_bulk_pattern": "❌ فرمت وارد شده اشتباه است!\nحتماً باید یک بخش متنی و سپس یک عدد داخل پرانتز باشد. (مثال: <code>vip(100)</code>)",
+    "bulk_select_external_prompt": "لطفاً یک اکسترنال اسکواد (External Squad) انتخاب کنید:\n(اگر انتخاب کنید، تنظیمات HWID نادیده گرفته می‌شود)",
+    "external_none_btn": "🚫 هیچکدام (None)",
+    "bulk_creation_started": "⏳ عملیات ساخت گروهی <b>{count}</b> اکانت آغاز شد.\nربات با رعایت محدودیت‌های تلگرام، اکانت‌ها را یکی‌یکی ساخته و ارسال می‌کند. لطفاً صبور باشید...",
+    "bulk_creation_finished": "✅ ساخت گروهی با موفقیت به پایان رسید!\nتعداد ساخته شده: {success} | ناموفق: {failed}",
+	"bulk_suggestions_title": "\n\n<b>آخرین اکانت‌های ساخته شده جهت راهنمایی:</b>\n",
+	"last_no_ext_label": "(بدون اکسترنال اسکواد)",
+	"last_with_ext_label": "(با اکسترنال {squad})"
   },
   "en": {
     "hwid_limit": "⚙️ <b>HWID Limit:</b>",
@@ -347,7 +358,18 @@
     "confirm_cleanup_prompt_zero": "⚠️ <b>WARNING!</b>\nFound <b>{count}</b> expired users with <b>{status}</b> status.\nAre you sure you want to permanently delete them?",
     "no_users_to_cleanup": "ℹ️ No users found matching these criteria.",
     "cleanup_success": "✅ Cleanup completed successfully.\n<b>{count}</b> users were deleted.",
-    "cleanup_failed": "❌ Error during cleanup:\n<code>{error}</code>"
+    "cleanup_failed": "❌ Error during cleanup:\n<code>{error}</code>",
+	"bulk_create_btn": "👥 Bulk Create",
+    "ask_bulk_count": "Please enter the number of accounts to create (e.g., 10):",
+    "ask_bulk_pattern": "Please enter the username pattern.\n\n<b>Guide:</b> Write the prefix and put the starting number in parentheses.\nExample: <code>large(2390)</code> will create large2390, large2391, etc.",
+    "invalid_bulk_pattern": "❌ Invalid format!\nIt must be a text followed by a number in parentheses. (e.g., <code>vip(100)</code>)",
+    "bulk_select_external_prompt": "Please select an External Squad:\n(If selected, HWID settings will be skipped)",
+    "external_none_btn": "🚫 None",
+    "bulk_creation_started": "⏳ Bulk creation of <b>{count}</b> accounts started.\nThe bot will generate and send them one by one. Please wait...",
+    "bulk_creation_finished": "✅ Bulk creation finished!\nSuccessful: {success} | Failed: {failed}",
+	"bulk_suggestions_title": "\n\n<b>Latest created accounts for reference:</b>\n",
+	"last_no_ext_label": "(No External Squad)",
+	"last_with_ext_label": "(With External {squad})"
   },
   "ru": {
     "hwid_limit": "⚙️ <b>Лимит HWID:</b>",
@@ -522,6 +544,17 @@
     "confirm_cleanup_prompt_zero": "⚠️ <b>ВНИМАНИЕ!</b>\nНайдено <b>{count}</b> истекших пользователей со статусом <b>{status}</b>.\nУдалить их навсегда?",
     "no_users_to_cleanup": "ℹ️ Пользователи, соответствующие этим критериям, не найдены.",
     "cleanup_success": "✅ Очистка успешно завершена.\nУдалено <b>{count}</b> пользователей.",
-    "cleanup_failed": "❌ Ошибка при очистке:\n<code>{error}</code>"
+    "cleanup_failed": "❌ Ошибка при очистке:\n<code>{error}</code>",
+	"bulk_create_btn": "👥 Массовое создание",
+    "ask_bulk_count": "Введите количество аккаунтов для создания (например: 10):",
+    "ask_bulk_pattern": "Введите шаблон имени пользователя.\n\n<b>Руководство:</b> Напишите префикс и укажите начальный номер в скобках.\nПример: <code>large(2390)</code> создаст large2390, large2391 и т.д.",
+    "invalid_bulk_pattern": "❌ Неверный формат!\nТекст должен сопровождаться числом в скобках. (например: <code>vip(100)</code>)",
+    "bulk_select_external_prompt": "Выберите External Squad:\n(Если выбрано, настройки HWID будут пропущены)",
+    "external_none_btn": "🚫 Ни один (None)",
+    "bulk_creation_started": "⏳ Массовое создание <b>{count}</b> аккаунтов началось.\nБот будет отправлять их по одному. Пожалуйста, подождите...",
+    "bulk_creation_finished": "✅ Массовое создание завершено!\nУспешно: {success} | Ошибки: {failed}",
+	"bulk_suggestions_title": "\n\n<b>Последние созданные аккаунты для справки:</b>\n",
+	"last_no_ext_label": "(Без External Squad)",
+	"last_with_ext_label": "(С External {squad})"
   }
 }
