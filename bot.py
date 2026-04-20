@@ -40,8 +40,9 @@ COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("st
     # === NEW STATES FOR BULK CREATE ===
     AWAITING_BULK_COUNT, AWAITING_BULK_PATTERN, AWAITING_BULK_DATA_LIMIT,
     AWAITING_BULK_EXPIRE_DAYS, SELECTING_BULK_INTERNAL_SQUADS, SELECTING_BULK_EXTERNAL_SQUAD,
-    SELECTING_BULK_HWID_OPTION, AWAITING_BULK_HWID_VALUE_STEP, SELECTING_BULK_BANNER
-) = range(40)
+    SELECTING_BULK_HWID_OPTION, AWAITING_BULK_HWID_VALUE_STEP, SELECTING_BULK_BANNER,
+    SELECT_EXT_SQUAD_FOR_EDIT, SELECT_ACTION_FOR_EXT_SQUAD, CONFIRM_EXT_SQUAD_ACTION
+) = range(43)
 
 
 def get_settings() -> dict:
@@ -484,6 +485,7 @@ async def show_edit_all_users_menu(update: Update, context: ContextTypes.DEFAULT
         [InlineKeyboardButton(t('bulk_edit_date_btn', context), callback_data='bulk_edit_date')],
         [InlineKeyboardButton(t('bulk_edit_hwid_btn', context), callback_data='bulk_edit_hwid')],
         [InlineKeyboardButton(t('smart_cleanup_btn', context), callback_data='bulk_smart_cleanup')],
+        [InlineKeyboardButton(t('edit_by_external_btn', context), callback_data='bulk_edit_external')],
         [InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -515,6 +517,9 @@ async def edit_all_users_menu_handler(update: Update, context: ContextTypes.DEFA
         
     elif action == 'bulk_smart_cleanup':
         return await show_cleanup_menu(update, context)
+        
+    elif action == 'bulk_edit_external':
+        return await show_ext_squads_for_edit(update, context)
 
 async def show_bulk_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -2309,6 +2314,157 @@ async def run_bulk_creation_background(task_data: dict):
         text=job_t('bulk_creation_finished', success=success_count, failed=failed_count), 
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+    
+# --- Start of Edit By External Squad Feature ---
+async def show_ext_squads_for_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.message.edit_text("⏳ در حال دریافت لیست اسکوادها...")
+    
+    data, error = await asyncio.to_thread(api_request, 'GET', '/api/external-squads')
+    external_squads = data.get('response', {}).get('externalSquads', []) if not error and data else []
+    
+    context.user_data['external_squads_data'] = external_squads
+    
+    keyboard = []
+    for sq in external_squads:
+        keyboard.append([InlineKeyboardButton(sq['name'], callback_data=f"extedit_{sq['uuid']}")])
+    keyboard.append([InlineKeyboardButton(t('external_none_btn', context), callback_data="extedit_none")])
+    keyboard.append([InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='go_edit_all_users')])
+    
+    await query.message.edit_text(
+        text=t('select_ext_squad_edit_prompt', context),
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.HTML
+    )
+    return SELECT_EXT_SQUAD_FOR_EDIT
+
+async def ext_squad_selected_for_edit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    sq_uuid = query.data.split('_', 1)[1]
+    sq_name = "None"
+    
+    if sq_uuid == "none":
+        sq_uuid = None
+        sq_name = t('external_none_btn', context)
+    else:
+        for sq in context.user_data.get('external_squads_data', []):
+            if sq['uuid'] == sq_uuid:
+                sq_name = sq['name']
+                break
+    
+    context.user_data['ext_edit_squad_uuid'] = sq_uuid
+    context.user_data['ext_edit_squad_name'] = sq_name
+    
+    await query.message.edit_text("⏳ در حال دریافت آمار و جستجوی کاربران...")
+    
+    users_data, error = await api_request_get_all_users()
+    if error:
+        await query.message.edit_text(f"❌ Error: {error}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_btn', context), callback_data='bulk_edit_external')]]))
+        return SELECT_EXT_SQUAD_FOR_EDIT
+        
+    all_users = users_data.get('response', {}).get('users', [])
+    
+    matching_uuids = []
+    for u in all_users:
+        if u.get('externalSquadUuid') == sq_uuid:
+            matching_uuids.append(u.get('uuid'))
+            
+    context.user_data['ext_edit_target_uuids'] = matching_uuids
+    
+    if not matching_uuids:
+        keyboard = [[InlineKeyboardButton(t('back_btn', context), callback_data='bulk_edit_external')]]
+        await query.message.edit_text("ℹ️ هیچ کاربری در این گروه یافت نشد.", reply_markup=InlineKeyboardMarkup(keyboard))
+        return SELECT_EXT_SQUAD_FOR_EDIT
+        
+    keyboard = [
+        [InlineKeyboardButton(t('action_enable', context), callback_data='extaction_enable')],
+        [InlineKeyboardButton(t('action_disable', context), callback_data='extaction_disable')],
+        [InlineKeyboardButton(t('action_delete', context), callback_data='extaction_delete')],
+        [InlineKeyboardButton(t('back_btn', context), callback_data='bulk_edit_external')]
+    ]
+    
+    await query.message.edit_text(
+        t('ext_squad_action_prompt', context, squad_name=sq_name, count=len(matching_uuids)),
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.HTML
+    )
+    return SELECT_ACTION_FOR_EXT_SQUAD
+
+async def ext_squad_action_selected_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    action = query.data.split('_')[1] # enable, disable, delete
+    context.user_data['ext_edit_action'] = action
+    
+    action_name = t(f'action_{action}_name', context)
+    count = len(context.user_data.get('ext_edit_target_uuids', []))
+    
+    keyboard = [
+        [InlineKeyboardButton(t('confirm_btn', context), callback_data='confirm_ext_action')],
+        [InlineKeyboardButton(t('cancel_btn', context), callback_data='cancel_ext_action')]
+    ]
+    
+    await query.message.edit_text(
+        t('confirm_ext_squad_action', context, action_name=action_name, count=count),
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.HTML
+    )
+    return CONFIRM_EXT_SQUAD_ACTION
+
+async def confirm_ext_squad_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == 'cancel_ext_action':
+        return await show_edit_all_users_menu(update, context) 
+        
+    action = context.user_data.get('ext_edit_action')
+    uuids = context.user_data.get('ext_edit_target_uuids', [])
+    
+    if not uuids: return await start(query, context)
+        
+    await query.message.edit_text("⏳ در حال اعمال تغییرات گروهی...")
+    
+    batch_size = 500
+    has_error = False
+    error_msg = ""
+    
+    if action == 'delete':
+        endpoint = '/api/users/bulk/delete'
+        for i in range(0, len(uuids), batch_size):
+            batch = uuids[i:i + batch_size]
+            _, error = await asyncio.to_thread(api_request, 'POST', endpoint, payload={"uuids": batch})
+            if error:
+                has_error = True; error_msg = error; break
+                
+    elif action in ['enable', 'disable']:
+        endpoint = '/api/users/bulk/update'
+        status_val = 'ACTIVE' if action == 'enable' else 'DISABLED'
+        for i in range(0, len(uuids), batch_size):
+            batch = uuids[i:i + batch_size]
+            payload = {
+                "uuids": batch,
+                "fields": {"status": status_val}
+            }
+            _, error = await asyncio.to_thread(api_request, 'POST', endpoint, payload=payload)
+            if error:
+                has_error = True; error_msg = error; break
+
+    if has_error:
+        keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
+        await query.message.edit_text(f"❌ خطا: {error_msg}", reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        keyboard = [[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]]
+        await query.message.edit_text(
+            t('ext_squad_action_success', context, count=len(uuids)),
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
+    return ConversationHandler.END
+# --- End of Edit By External Squad Feature ---
 # --- End of Bulk Create Feature ---
 
 def main() -> None:
@@ -2383,6 +2539,15 @@ def main() -> None:
             SELECTING_BULK_HWID_OPTION: [CallbackQueryHandler(bulk_hwid_option_handler, pattern='^bulk_hwid_')],
             AWAITING_BULK_HWID_VALUE_STEP: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bulk_hwid_value)],
             SELECTING_BULK_BANNER: [CallbackQueryHandler(start_bulk_creation_process, pattern='^bulk_banner_')],
+            SELECT_EXT_SQUAD_FOR_EDIT: [
+                CallbackQueryHandler(ext_squad_selected_for_edit_handler, pattern='^extedit_'),
+                CallbackQueryHandler(show_edit_all_users_menu, pattern='^go_edit_all_users$')
+            ],
+            SELECT_ACTION_FOR_EXT_SQUAD: [
+                CallbackQueryHandler(ext_squad_action_selected_handler, pattern='^extaction_'),
+                CallbackQueryHandler(show_ext_squads_for_edit, pattern='^bulk_edit_external$')
+            ],
+            CONFIRM_EXT_SQUAD_ACTION: [CallbackQueryHandler(confirm_ext_squad_action_handler, pattern='^(confirm|cancel)_ext_action$')],
         },
         fallbacks=[
             CommandHandler('start', start),
