@@ -10,7 +10,7 @@ from telegram.ext import (
     CallbackQueryHandler, MessageHandler, filters, ContextTypes
 )
 from telegram.constants import ParseMode
-from telegram.error import BadRequest
+from telegram.error import BadRequest, RetryAfter
 import qrcode
 
 import config
@@ -2087,6 +2087,10 @@ async def fetch_and_show_bulk_external_squads(update: Update, context: ContextTy
     data, error = await asyncio.to_thread(api_request, 'GET', '/api/external-squads')
     external_squads = data.get('response', {}).get('externalSquads', []) if not error and data else []
     
+    # === ذخیره اطلاعات اسکوادها برای مرحله بعد ===
+    context.user_data['external_squads_data'] = external_squads
+    # ============================================
+    
     keyboard = []
     for sq in external_squads:
         keyboard.append([InlineKeyboardButton(sq['name'], callback_data=f"extsq_{sq['uuid']}")])
@@ -2107,7 +2111,6 @@ async def bulk_external_squad_handler(update: Update, context: ContextTypes.DEFA
     
     if sq_uuid == "none":
         context.user_data['bulk_data']['external_squad'] = None
-        # درخواست HWID
         keyboard = [
             [InlineKeyboardButton(t('enable_hwid_btn', context), callback_data='bulk_hwid_enable')],
             [InlineKeyboardButton(t('disable_hwid_btn', context), callback_data='bulk_hwid_disable')]
@@ -2116,7 +2119,21 @@ async def bulk_external_squad_handler(update: Update, context: ContextTypes.DEFA
         return SELECTING_BULK_HWID_OPTION
     else:
         context.user_data['bulk_data']['external_squad'] = sq_uuid
-        context.user_data['bulk_data']['hwidDeviceLimit'] = 0
+        
+        # === خواندن تنظیمات HWID از اکسترنال اسکواد ===
+        hwid_limit = 0
+        ext_squads = context.user_data.get('external_squads_data', [])
+        for sq in ext_squads:
+            if sq.get('uuid') == sq_uuid:
+                hwid_settings = sq.get('hwidSettings', {})
+                # اگر فعال بود مقدار fallback رو بگیر، وگرنه همون 0 میمونه
+                if hwid_settings.get('enabled') == True:
+                    hwid_limit = hwid_settings.get('fallbackDeviceLimit', 0)
+                break
+                
+        context.user_data['bulk_data']['hwidDeviceLimit'] = hwid_limit
+        # =============================================
+        
         return await show_bulk_banner_selection(update, context)
 
 async def bulk_hwid_option_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -2272,10 +2289,19 @@ async def run_bulk_creation_background(task_data: dict):
                 await bot.send_photo(chat_id=chat_id, photo=qr_bytes, caption=caption, parse_mode=ParseMode.HTML)
             else:
                 await bot.send_message(chat_id=chat_id, text=caption, parse_mode=ParseMode.HTML)
+                
+        except RetryAfter as e:
+            logger.warning(f"Telegram Flood limit hit. Sleeping for {e.retry_after} seconds.")
+            await asyncio.sleep(e.retry_after)
+            if qr_bytes:
+                await bot.send_photo(chat_id=chat_id, photo=qr_bytes, caption=caption, parse_mode=ParseMode.HTML)
+            else:
+                await bot.send_message(chat_id=chat_id, text=caption, parse_mode=ParseMode.HTML)
+                
         except Exception as e:
             logger.error(f"Failed to send banner for {username}: {e}")
             
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(0.5)
 
     keyboard = [[InlineKeyboardButton(job_t('back_to_main_menu_btn'), callback_data='back_to_main')]]
     await bot.send_message(
