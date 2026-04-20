@@ -183,7 +183,18 @@
     "bulk_creation_finished": "✅ ساخت گروهی با موفقیت به پایان رسید!\nتعداد ساخته شده: {success} | ناموفق: {failed}",
 	"bulk_suggestions_title": "\n\n<b>آخرین اکانت‌های ساخته شده جهت راهنمایی:</b>\n",
 	"last_no_ext_label": "(بدون اکسترنال اسکواد)",
-	"last_with_ext_label": "(با اکسترنال {squad})"
+	"last_with_ext_label": "(با اکسترنال {squad})",
+	"edit_by_external_btn": "👥 ویرایش با اکسترنال",
+    "select_ext_squad_edit_prompt": "✨ لطفاً اکسترنال اسکواد مورد نظر برای اعمال تغییرات گروهی را انتخاب کنید:",
+    "ext_squad_action_prompt": "شما گروه <b>{squad_name}</b> شامل <b>{count}</b> کاربر را انتخاب کردید.\nچه عملیاتی می‌خواهید انجام دهید؟",
+    "action_enable": "✅ فعال‌سازی همه",
+    "action_disable": "🚫 غیرفعال‌سازی همه",
+    "action_delete": "🗑️ حذف همه",
+    "confirm_ext_squad_action": "⚠️ <b>اخطار!</b>\nشما در حال <b>{action_name}</b> تعداد <b>{count}</b> کاربر هستید.\nآیا مطمئنید؟",
+    "action_enable_name": "فعال‌سازی",
+    "action_disable_name": "غیرفعال‌سازی",
+    "action_delete_name": "حذف دائمی",
+    "ext_squad_action_success": "✅ عملیات با موفقیت انجام شد.\nروی <b>{count}</b> کاربر اعمال گردید."
   },
   "en": {
     "hwid_limit": "⚙️ <b>HWID Limit:</b>",
@@ -369,7 +380,18 @@
     "bulk_creation_finished": "✅ Bulk creation finished!\nSuccessful: {success} | Failed: {failed}",
 	"bulk_suggestions_title": "\n\n<b>Latest created accounts for reference:</b>\n",
 	"last_no_ext_label": "(No External Squad)",
-	"last_with_ext_label": "(With External {squad})"
+	"last_with_ext_label": "(With External {squad})",
+	"edit_by_external_btn": "👥 Edit by External",
+    "select_ext_squad_edit_prompt": "✨ Please select the External Squad for bulk edit:",
+    "ext_squad_action_prompt": "You selected <b>{squad_name}</b> with <b>{count}</b> users.\nWhat action do you want to perform?",
+    "action_enable": "✅ Enable All",
+    "action_disable": "🚫 Disable All",
+    "action_delete": "🗑️ Delete All",
+    "confirm_ext_squad_action": "⚠️ <b>WARNING!</b>\nYou are about to <b>{action_name}</b> <b>{count}</b> users.\nAre you sure?",
+    "action_enable_name": "Enable",
+    "action_disable_name": "Disable",
+    "action_delete_name": "Delete",
+    "ext_squad_action_success": "✅ Action completed successfully.\nAffected <b>{count}</b> users."
   },
   "ru": {
     "hwid_limit": "⚙️ <b>Лимит HWID:</b>",
@@ -555,6 +577,17 @@
     "bulk_creation_finished": "✅ Массовое создание завершено!\nУспешно: {success} | Ошибки: {failed}",
 	"bulk_suggestions_title": "\n\n<b>Последние созданные аккаунты для справки:</b>\n",
 	"last_no_ext_label": "(Без External Squad)",
-	"last_with_ext_label": "(С External {squad})"
+	"last_with_ext_label": "(С External {squad})",
+	"edit_by_external_btn": "👥 Изменить по External",
+    "select_ext_squad_edit_prompt": "✨ Выберите External Squad для изменения:",
+    "ext_squad_action_prompt": "Вы выбрали <b>{squad_name}</b> ({count} аккаунтов).\nКакое действие вы хотите выполнить?",
+    "action_enable": "✅ Включить всех",
+    "action_disable": "🚫 Отключить всех",
+    "action_delete": "🗑️ Удалить всех",
+    "confirm_ext_squad_action": "⚠️ <b>ВНИМАНИЕ!</b>\nВы собираетесь <b>{action_name}</b> <b>{count}</b> пользователей.\nВы уверены?",
+    "action_enable_name": "Включить",
+    "action_disable_name": "Отключить",
+    "action_delete_name": "Удалить",
+    "ext_squad_action_success": "✅ Действие успешно выполнено.\nЗатронуто <b>{count}</b> пользователей."
   }
 }
