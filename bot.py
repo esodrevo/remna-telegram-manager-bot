@@ -371,8 +371,7 @@ async def get_bulk_suggestions_text(context: ContextTypes.DEFAULT_TYPE) -> str:
     latest_per_squad = {} 
 
     for u in all_users:
-        ext_list = u.get('activeExternalSquads', [])
-        squad_key = ext_list[0] if ext_list else None
+        squad_key = u.get('externalSquadUuid') 
         
         current_latest = latest_per_squad.get(squad_key)
         if not current_latest or get_creation_date(u) > get_creation_date(current_latest):
@@ -2243,7 +2242,7 @@ async def run_bulk_creation_background(task_data: dict):
         }
         
         if external_squad:
-            payload["activeExternalSquads"] = [external_squad]
+            payload["externalSquadUuid"] = external_squad
 
         data, error = await asyncio.to_thread(api_request, 'POST', '/api/users', payload=payload)
         
