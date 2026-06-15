@@ -1337,6 +1337,31 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return USER_MENU
 # === CHANGE END ===
 
+async def show_hwid_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    username = context.user_data.get('username')
+    user_uuid = context.user_data.get('user_uuid')
+    user_data = context.user_data.get('user_data', {})
+    hwid_limit = user_data.get('hwidDeviceLimit', 0)
+
+    # دریافت لیست دستگاه‌ها از API برای نمایش تعداد
+    data, error = await asyncio.to_thread(api_request, 'GET', f'/api/hwid/devices/{user_uuid}')
+    devices = data.get('response', {}).get('devices', []) if not error and data else []
+    count = len(devices)
+
+    text = t('manage_hwid_title', context, username=html.escape(username), limit=hwid_limit, count=count)
+    
+    keyboard = [
+        [InlineKeyboardButton(t('btn_change_hwid_limit', context), callback_data='change_hwid_limit')],
+        [InlineKeyboardButton(t('btn_view_hwid_list', context), callback_data='view_hwid_list')],
+        [InlineKeyboardButton(t('btn_reset_all_hwid', context), callback_data='reset_all_hwid_confirm')],
+        [InlineKeyboardButton(t('back_to_user_info_btn', context), callback_data='back_to_user_info')]
+    ]
+    
+    query = update.callback_query
+    if query:
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    return USER_MENU
+
 async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer(); action = query.data
     
@@ -1350,11 +1375,93 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         context.user_data['edit_prompt_message_id'] = prompt_message.message_id
         context.user_data['editing'] = 'expire'
         return AWAITING_EXPIRE
-    elif action == 'edit_hwid':
+        
+    if action == 'edit_hwid':
+        return await show_hwid_menu(update, context)
+        
+    if action == 'change_hwid_limit':
         prompt_message = await query.message.edit_text(text=t('ask_for_new_hwid_limit', context, username=html.escape(context.user_data.get('username', ''))), parse_mode=ParseMode.HTML)
         context.user_data['edit_prompt_message_id'] = prompt_message.message_id
         context.user_data['editing'] = 'hwid'
         return AWAITING_HWID_EDIT
+        
+    if action == 'reset_all_hwid_confirm':
+        keyboard = [
+            [InlineKeyboardButton(t('btn_confirm_reset_hwid', context), callback_data='do_reset_all_hwid')],
+            [InlineKeyboardButton(t('cancel_btn', context), callback_data='edit_hwid')]
+        ]
+        await query.message.edit_text(t('hwid_reset_confirm', context), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        return USER_MENU
+        
+    if action == 'do_reset_all_hwid':
+        user_uuid = context.user_data.get('user_uuid')
+        payload = {"userUuid": user_uuid}
+        _, error = await asyncio.to_thread(api_request, 'POST', '/api/hwid/devices/delete-all', payload=payload)
+        
+        if error:
+            await query.answer(f"Error: {error}", show_alert=True)
+        else:
+            await query.answer(t('hwid_reset_success', context), show_alert=True)
+        return await show_hwid_menu(update, context)
+        
+    if action == 'view_hwid_list':
+        user_uuid = context.user_data.get('user_uuid')
+        username = context.user_data.get('username')
+        
+        await query.message.edit_text("⏳ در حال دریافت لیست دستگاه‌ها...")
+        
+        data, error = await asyncio.to_thread(api_request, 'GET', f'/api/hwid/devices/{user_uuid}')
+        devices = data.get('response', {}).get('devices', []) if data and not error else []
+        
+        if not devices:
+            await query.answer(t('no_devices_connected', context), show_alert=True)
+            return await show_hwid_menu(update, context)
+            
+        text = t('hwid_list_title', context, username=html.escape(username))
+        keyboard = []
+        
+        for idx, dev in enumerate(devices, start=1):
+            dev_hwid = dev.get('hwid')
+            platform = dev.get('platform') or t('unknown', context)
+            os_version = dev.get('osVersion') or t('unknown', context)
+            model = dev.get('deviceModel') or t('unknown', context)
+            client = dev.get('userAgent') or t('unknown', context)
+            
+            text += t('hwid_device_item', context, index=idx, platform=html.escape(platform), os_version=html.escape(os_version), model=html.escape(model), client=html.escape(client))
+            
+            # ذخیره HWID در مموری کشِ سشن تا بتوانیم موقع کلیک روی دکمه حذف به آن ارجاع دهیم
+            context.user_data[f'hwid_dev_{idx}'] = dev_hwid
+            keyboard.append([InlineKeyboardButton(t('btn_delete_single_hwid', context, index=idx), callback_data=f'delhwid_{idx}')])
+            
+        keyboard.append([InlineKeyboardButton(t('back_btn', context), callback_data='edit_hwid')])
+        
+        # هندل کردن سقف طول پیام در تلگرام
+        if len(text) > 4000:
+            text = text[:3900] + "\n\n... (لیست بیش از حد طولانی است)"
+            
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        return USER_MENU
+        
+    if action.startswith('delhwid_'):
+        idx = action.split('_')[1]
+        hwid_to_del = context.user_data.get(f'hwid_dev_{idx}')
+        
+        if not hwid_to_del:
+            await query.answer("❌ خطا: دستگاه یافت نشد. لطفاً منو را رفرش کنید.", show_alert=True)
+            return USER_MENU
+            
+        user_uuid = context.user_data.get('user_uuid')
+        payload = {"userUuid": user_uuid, "hwid": hwid_to_del}
+        
+        _, error = await asyncio.to_thread(api_request, 'POST', '/api/hwid/devices/delete', payload=payload)
+        
+        if error:
+            await query.answer(f"خطا: {error}", show_alert=True)
+        else:
+            await query.answer(t('hwid_single_deleted', context), show_alert=True)
+            # فراخوانی مجدد همین رویداد برای رفرش لحظه‌ای لیست بعد از حذف موفق
+            query.data = 'view_hwid_list'
+            return await user_menu_handler(update, context)
         
     elif action == 'edit_squads':
         await query.message.edit_text(t('fetching_squads_prompt', context))
