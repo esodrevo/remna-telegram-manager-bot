@@ -194,7 +194,9 @@
     "action_enable_name": "فعال‌سازی",
     "action_disable_name": "غیرفعال‌سازی",
     "action_delete_name": "حذف دائمی",
-    "ext_squad_action_success": "✅ عملیات با موفقیت انجام شد.\nروی <b>{count}</b> کاربر اعمال گردید."
+    "ext_squad_action_success": "✅ عملیات با موفقیت انجام شد.\nروی <b>{count}</b> کاربر اعمال گردید.",
+	"edit_squads_btn": "👥 ویرایش اسکواد",
+    "ask_edit_user_squads_prompt": "✨ لطفاً اسکواد(های) مورد نظر را برای این کاربر انتخاب کنید:"
   },
   "en": {
     "hwid_limit": "⚙️ <b>HWID Limit:</b>",
@@ -391,7 +393,9 @@
     "action_enable_name": "Enable",
     "action_disable_name": "Disable",
     "action_delete_name": "Delete",
-    "ext_squad_action_success": "✅ Action completed successfully.\nAffected <b>{count}</b> users."
+    "ext_squad_action_success": "✅ Action completed successfully.\nAffected <b>{count}</b> users.",
+	"edit_squads_btn": "👥 Edit Squads",
+    "ask_edit_user_squads_prompt": "✨ Please select the squad(s) for this user:"
   },
   "ru": {
     "hwid_limit": "⚙️ <b>Лимит HWID:</b>",
@@ -588,6 +592,8 @@
     "action_enable_name": "Включить",
     "action_disable_name": "Отключить",
     "action_delete_name": "Удалить",
-    "ext_squad_action_success": "✅ Действие успешно выполнено.\nЗатронуто <b>{count}</b> пользователей."
+    "ext_squad_action_success": "✅ Действие успешно выполнено.\nЗатронуто <b>{count}</b> пользователей.",
+	"edit_squads_btn": "👥 Изменить отряд",
+    "ask_edit_user_squads_prompt": "✨ Пожалуйста, выберите отряд(ы) для этого пользователя:"
   }
 }
