@@ -41,8 +41,8 @@ COMMANDS = {'en': [BotCommand("start", "Show Main Menu")], 'fa': [BotCommand("st
     AWAITING_BULK_COUNT, AWAITING_BULK_PATTERN, AWAITING_BULK_DATA_LIMIT,
     AWAITING_BULK_EXPIRE_DAYS, SELECTING_BULK_INTERNAL_SQUADS, SELECTING_BULK_EXTERNAL_SQUAD,
     SELECTING_BULK_HWID_OPTION, AWAITING_BULK_HWID_VALUE_STEP, SELECTING_BULK_BANNER,
-    SELECT_EXT_SQUAD_FOR_EDIT, SELECT_ACTION_FOR_EXT_SQUAD, CONFIRM_EXT_SQUAD_ACTION
-) = range(43)
+    SELECT_EXT_SQUAD_FOR_EDIT, SELECT_ACTION_FOR_EXT_SQUAD, CONFIRM_EXT_SQUAD_ACTION, SELECT_USER_SQUADS_EDIT
+) = range(44)
 
 
 def get_settings() -> dict:
@@ -1326,6 +1326,9 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             InlineKeyboardButton(t('user_links_btn', context), callback_data='show_all_links:0')
         ],
         [
+            InlineKeyboardButton(t('edit_squads_btn', context), callback_data='edit_squads')
+        ],
+        [
             InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')
         ]
     ]
@@ -1352,6 +1355,10 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         context.user_data['edit_prompt_message_id'] = prompt_message.message_id
         context.user_data['editing'] = 'hwid'
         return AWAITING_HWID_EDIT
+        
+    elif action == 'edit_squads':
+        await query.message.edit_text(t('fetching_squads_prompt', context))
+        return await prepare_user_squad_edit(update, context)
     
     if action == 'refresh':
         await query.message.delete(); return await show_user_card(update, context)
@@ -1642,6 +1649,93 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         context.job_queue.run_once(lambda j: j.context.delete(), 5, context=msg)
     
     return await show_user_card(update, context)
+    
+async def prepare_user_squad_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    user_data = context.user_data.get('user_data', {})
+
+    # استخراج اسکوادهای فعلی کاربر (مدیریت امن دیتای برگشتی از پنل)
+    current_squads = user_data.get('activeInternalSquads', [])
+    selected_uuids = set()
+    for sq in current_squads:
+        if isinstance(sq, dict) and 'uuid' in sq:
+            selected_uuids.add(sq['uuid'])
+        elif isinstance(sq, str):
+            selected_uuids.add(sq)
+
+    context.user_data['selected_squads'] = selected_uuids
+
+    # دریافت لیست کل اسکوادهای سیستم
+    squads_data, error = await asyncio.to_thread(api_request, 'GET', '/api/internal-squads')
+    if error or not squads_data or 'response' not in squads_data:
+        await query.message.edit_text(text=t('fetching_squads_error', context))
+        return await show_user_card(update, context)
+
+    context.user_data['available_squads'] = squads_data['response'].get('internalSquads', [])
+
+    keyboard = build_edit_user_squad_keyboard(context)
+    await query.message.edit_text(
+        text=t('ask_edit_user_squads_prompt', context),
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.HTML
+    )
+    return SELECT_USER_SQUADS_EDIT
+
+def build_edit_user_squad_keyboard(context: ContextTypes.DEFAULT_TYPE) -> list:
+    keyboard = []
+    available = context.user_data.get('available_squads', [])
+    selected = context.user_data.get('selected_squads', set())
+
+    for squad in available:
+        squad_name = squad['name']
+        squad_uuid = squad['uuid']
+        display_name = f"✅ {squad_name}" if squad_uuid in selected else squad_name
+        keyboard.append([InlineKeyboardButton(display_name, callback_data=f"editsquad_{squad_uuid}")])
+
+    keyboard.append([InlineKeyboardButton(t('done_squad_selection_btn', context), callback_data='edit_squads_final')])
+    keyboard.append([InlineKeyboardButton(t('back_to_user_info_btn', context), callback_data='back_to_user_info')])
+    return keyboard
+
+async def edit_user_squads_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    action = query.data
+
+    if action == 'edit_squads_final':
+        user_uuid = context.user_data.get('user_uuid')
+        selected_squads = list(context.user_data.get('selected_squads', []))
+
+        payload = {
+            'uuid': user_uuid,
+            'activeInternalSquads': selected_squads
+        }
+
+        await query.message.edit_text("⏳ در حال ذخیره تغییرات در دیتابیس...")
+
+        _, error = await asyncio.to_thread(api_request, 'PATCH', '/api/users', payload=payload)
+
+        if error:
+            await query.message.edit_text(t('update_failed', context, error=error))
+            await asyncio.sleep(2)
+
+        return await show_user_card(update, context)
+
+    if action.startswith('editsquad_'):
+        squad_uuid = action.split('_', 1)[1]
+        selected_squads = context.user_data.get('selected_squads', set())
+
+        if squad_uuid in selected_squads:
+            selected_squads.remove(squad_uuid)
+        else:
+            selected_squads.add(squad_uuid)
+
+        context.user_data['selected_squads'] = selected_squads
+        keyboard = build_edit_user_squad_keyboard(context)
+        try:
+            await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+        except BadRequest:
+            pass
+        return SELECT_USER_SQUADS_EDIT
 
 
 async def logs_node_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -2548,6 +2642,10 @@ def main() -> None:
                 CallbackQueryHandler(show_ext_squads_for_edit, pattern='^bulk_edit_external$')
             ],
             CONFIRM_EXT_SQUAD_ACTION: [CallbackQueryHandler(confirm_ext_squad_action_handler, pattern='^(confirm|cancel)_ext_action$')],
+            SELECT_USER_SQUADS_EDIT: [
+                CallbackQueryHandler(edit_user_squads_handler, pattern='^editsquad_|^edit_squads_final$'),
+                CallbackQueryHandler(back_to_user_info_handler, pattern='^back_to_user_info$')
+            ],
         },
         fallbacks=[
             CommandHandler('start', start),
