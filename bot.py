@@ -1361,6 +1361,45 @@ async def show_hwid_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if query:
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
     return USER_MENU
+    
+async def render_hwid_list_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    user_uuid = context.user_data.get('user_uuid')
+    username = context.user_data.get('username')
+    
+    await query.message.edit_text("⏳ در حال دریافت لیست دستگاه‌ها...")
+    
+    data, error = await asyncio.to_thread(api_request, 'GET', f'/api/hwid/devices/{user_uuid}')
+    devices = data.get('response', {}).get('devices', []) if data and not error else []
+    
+    if not devices:
+        await query.answer(t('no_devices_connected', context), show_alert=True)
+        return await show_hwid_menu(update, context)
+        
+    text = t('hwid_list_title', context, username=html.escape(username))
+    keyboard = []
+    
+    for idx, dev in enumerate(devices, start=1):
+        dev_hwid = dev.get('hwid')
+        platform = dev.get('platform') or t('unknown', context)
+        os_version = dev.get('osVersion') or t('unknown', context)
+        model = dev.get('deviceModel') or t('unknown', context)
+        client = dev.get('userAgent') or t('unknown', context)
+        
+        text += t('hwid_device_item', context, index=idx, platform=html.escape(platform), os_version=html.escape(os_version), model=html.escape(model), client=html.escape(client))
+        
+        # ذخیره HWID در مموری کشِ سشن
+        context.user_data[f'hwid_dev_{idx}'] = dev_hwid
+        keyboard.append([InlineKeyboardButton(t('btn_delete_single_hwid', context, index=idx), callback_data=f'delhwid_{idx}')])
+        
+    keyboard.append([InlineKeyboardButton(t('back_btn', context), callback_data='edit_hwid')])
+    
+    # هندل کردن سقف طول پیام در تلگرام
+    if len(text) > 4000:
+        text = text[:3900] + "\n\n... (لیست بیش از حد طولانی است)"
+        
+    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    return USER_MENU
 
 async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query; await query.answer(); action = query.data
@@ -1405,42 +1444,7 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return await show_hwid_menu(update, context)
         
     if action == 'view_hwid_list':
-        user_uuid = context.user_data.get('user_uuid')
-        username = context.user_data.get('username')
-        
-        await query.message.edit_text("⏳ در حال دریافت لیست دستگاه‌ها...")
-        
-        data, error = await asyncio.to_thread(api_request, 'GET', f'/api/hwid/devices/{user_uuid}')
-        devices = data.get('response', {}).get('devices', []) if data and not error else []
-        
-        if not devices:
-            await query.answer(t('no_devices_connected', context), show_alert=True)
-            return await show_hwid_menu(update, context)
-            
-        text = t('hwid_list_title', context, username=html.escape(username))
-        keyboard = []
-        
-        for idx, dev in enumerate(devices, start=1):
-            dev_hwid = dev.get('hwid')
-            platform = dev.get('platform') or t('unknown', context)
-            os_version = dev.get('osVersion') or t('unknown', context)
-            model = dev.get('deviceModel') or t('unknown', context)
-            client = dev.get('userAgent') or t('unknown', context)
-            
-            text += t('hwid_device_item', context, index=idx, platform=html.escape(platform), os_version=html.escape(os_version), model=html.escape(model), client=html.escape(client))
-            
-            # ذخیره HWID در مموری کشِ سشن تا بتوانیم موقع کلیک روی دکمه حذف به آن ارجاع دهیم
-            context.user_data[f'hwid_dev_{idx}'] = dev_hwid
-            keyboard.append([InlineKeyboardButton(t('btn_delete_single_hwid', context, index=idx), callback_data=f'delhwid_{idx}')])
-            
-        keyboard.append([InlineKeyboardButton(t('back_btn', context), callback_data='edit_hwid')])
-        
-        # هندل کردن سقف طول پیام در تلگرام
-        if len(text) > 4000:
-            text = text[:3900] + "\n\n... (لیست بیش از حد طولانی است)"
-            
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
-        return USER_MENU
+        return await render_hwid_list_menu(update, context)
         
     if action.startswith('delhwid_'):
         idx = action.split('_')[1]
@@ -1457,11 +1461,11 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         
         if error:
             await query.answer(f"خطا: {error}", show_alert=True)
+            return USER_MENU
         else:
             await query.answer(t('hwid_single_deleted', context), show_alert=True)
-            # فراخوانی مجدد همین رویداد برای رفرش لحظه‌ای لیست بعد از حذف موفق
-            query.data = 'view_hwid_list'
-            return await user_menu_handler(update, context)
+            # فراخوانی مستقیم تابعی که لیست را می‌سازد و پیام را آپدیت می‌کند
+            return await render_hwid_list_menu(update, context)
         
     elif action == 'edit_squads':
         await query.message.edit_text(t('fetching_squads_prompt', context))
