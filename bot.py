@@ -1354,7 +1354,7 @@ async def show_hwid_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [InlineKeyboardButton(t('btn_change_hwid_limit', context), callback_data='change_hwid_limit')],
         [InlineKeyboardButton(t('btn_view_hwid_list', context), callback_data='view_hwid_list')],
         [InlineKeyboardButton(t('btn_reset_all_hwid', context), callback_data='reset_all_hwid_confirm')],
-        [InlineKeyboardButton(t('back_to_user_info_btn', context), callback_data='back_to_user_info')]
+        [InlineKeyboardButton(t('back_to_user_info_btn', context), callback_data='return_to_user_card')]
     ]
     
     query = update.callback_query
@@ -1417,6 +1417,10 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         
     if action == 'edit_hwid':
         return await show_hwid_menu(update, context)
+        
+    if action == 'return_to_user_card':
+        await query.message.delete()
+        return await show_user_card(update, context)
         
     if action == 'change_hwid_limit':
         prompt_message = await query.message.edit_text(text=t('ask_for_new_hwid_limit', context, username=html.escape(context.user_data.get('username', ''))), parse_mode=ParseMode.HTML)
