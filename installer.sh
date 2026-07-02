@@ -264,7 +264,8 @@ backup_menu() {
 install_bot() {
     check_root
     if [ -d "$INSTALL_DIR" ]; then
-        echo -e "${YELLOW}Existing installation found. Updating bot files...${NC}"
+        echo -e "${YELLOW}Existing installation found. Updating bot files and dependencies...${NC}"
+        "$INSTALL_DIR/venv/bin/pip" install "python-telegram-bot[ext]" requests "qrcode[pil]" flask "urllib3" pycryptodome >/dev/null 2>&1
     else
         echo -e "${GREEN}Starting Remna Bot installation...${NC}"
         apt-get update >/dev/null 2>&1
@@ -273,7 +274,7 @@ install_bot() {
         mkdir -p "$INSTALL_DIR"
         python3 -m venv "$INSTALL_DIR/venv"
         echo "Virtual environment created at $INSTALL_DIR/venv."
-        "$INSTALL_DIR/venv/bin/pip" install "python-telegram-bot[ext]" requests "qrcode[pil]" flask "urllib3" >/dev/null 2>&1
+        "$INSTALL_DIR/venv/bin/pip" install "python-telegram-bot[ext]" requests "qrcode[pil]" flask "urllib3" pycryptodome >/dev/null 2>&1
         echo "Python packages installed."
         echo -e "${YELLOW}Please provide your bot configuration:${NC}"
         read -p "Enter your BotFather API Token: " bot_token
