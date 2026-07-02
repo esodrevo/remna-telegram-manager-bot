@@ -23,25 +23,48 @@ class HappCrypto:
 
     @classmethod
     def get_public_key(cls):
-        # اگر کلید از قبل دریافت شده، همان را برگردان
+        # اگر کلید قبلاً استخراج شده، همان را برگردان
         if cls._v4_public_key:
             return cls._v4_public_key
 
         try:
-            # دریافت سورس کد کتابخانه Happ از مخزن NPM
-            response = requests.get("https://unpkg.com/@kastov/cryptohapp", timeout=10)
-            response.raise_for_status()
-            content = response.text
+            import requests, re, tarfile, io
 
-            # استخراج کلید عمومی (Public Key) با استفاده از Regex
-            keys = re.findall(r'-----BEGIN PUBLIC KEY-----.*?-----END PUBLIC KEY-----', content, flags=re.DOTALL)
-            if not keys:
-                raise ValueError("Public key not found in the package.")
+            # ۱. دریافت لینک دانلودِ آخرین نسخه پکیج از مخزن اصلی NPM
+            reg_resp = requests.get("https://registry.npmjs.org/@kastov/cryptohapp", timeout=10)
+            reg_resp.raise_for_status()
+            latest_version = reg_resp.json()['dist-tags']['latest']
+            tarball_url = reg_resp.json()['versions'][latest_version]['dist']['tarball']
+
+            # ۲. دانلود فایل فشرده کل پکیج
+            tar_resp = requests.get(tarball_url, timeout=15)
+            tar_resp.raise_for_status()
+
+            all_keys = []
             
-            # معمولا کلید V4 آخرین کلید تعریف شده در این فایل است
-            key_raw = keys[-1].replace('\\n', '\n')
-            cls._v4_public_key = key_raw
+            # ۳. باز کردن فایل فشرده در رَم و گشتن داخل تک‌تک فایل‌های جاوااسکریپت
+            with tarfile.open(fileobj=io.BytesIO(tar_resp.content), mode="r:gz") as tar:
+                for member in tar.getmembers():
+                    if member.isfile() and member.name.endswith(('.js', '.ts')):
+                        f = tar.extractfile(member)
+                        content = f.read().decode('utf-8', errors='ignore')
+                        
+                        # جستجوی کلیدها در این فایل
+                        found_keys = re.findall(r'-----BEGIN PUBLIC KEY-----.*?-----END PUBLIC KEY-----', content, flags=re.DOTALL)
+                        for k in found_keys:
+                            clean_key = k.replace('\\n', '\n').replace('\\r', '')
+                            if clean_key not in all_keys:
+                                all_keys.append(clean_key)
+
+            if not all_keys:
+                raise ValueError("Public key not found in the NPM package.")
+            
+            # ۴. کلید نسخه v4 از نوع RSA-4096 است و قطعا بلندترین طول رشته را دارد
+            all_keys.sort(key=len)
+            cls._v4_public_key = all_keys[-1]
+            
             return cls._v4_public_key
+            
         except Exception as e:
             raise Exception(f"Failed to fetch Happ public key: {e}")
 
@@ -51,10 +74,10 @@ class HappCrypto:
         key = RSA.import_key(pub_key_str)
         cipher = PKCS1_v1_5.new(key)
         
-        # رمزنگاری لینک خام سابسکریپشن
+        # رمزنگاری لینک خام
         encrypted_bytes = cipher.encrypt(raw_url.encode('utf-8'))
         
-        # تبدیل به Base64 و ساخت فرمت نهایی
+        # تبدیل به Base64
         b64_str = b64encode(encrypted_bytes).decode('utf-8')
         
         return f"happ://crypt4/{b64_str}"
