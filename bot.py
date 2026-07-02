@@ -12,8 +12,52 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, RetryAfter
 import qrcode
-
 import config
+import re
+from base64 import b64encode
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import PKCS1_v1_5
+
+class HappCrypto:
+    _v4_public_key = None
+
+    @classmethod
+    def get_public_key(cls):
+        # اگر کلید از قبل دریافت شده، همان را برگردان
+        if cls._v4_public_key:
+            return cls._v4_public_key
+
+        try:
+            # دریافت سورس کد کتابخانه Happ از مخزن NPM
+            response = requests.get("https://unpkg.com/@kastov/cryptohapp", timeout=10)
+            response.raise_for_status()
+            content = response.text
+
+            # استخراج کلید عمومی (Public Key) با استفاده از Regex
+            keys = re.findall(r'-----BEGIN PUBLIC KEY-----.*?-----END PUBLIC KEY-----', content, flags=re.DOTALL)
+            if not keys:
+                raise ValueError("Public key not found in the package.")
+            
+            # معمولا کلید V4 آخرین کلید تعریف شده در این فایل است
+            key_raw = keys[-1].replace('\\n', '\n')
+            cls._v4_public_key = key_raw
+            return cls._v4_public_key
+        except Exception as e:
+            raise Exception(f"Failed to fetch Happ public key: {e}")
+
+    @classmethod
+    def encrypt_link(cls, raw_url: str) -> str:
+        pub_key_str = cls.get_public_key()
+        key = RSA.import_key(pub_key_str)
+        cipher = PKCS1_v1_5.new(key)
+        
+        # رمزنگاری لینک خام سابسکریپشن
+        encrypted_bytes = cipher.encrypt(raw_url.encode('utf-8'))
+        
+        # تبدیل به Base64 و ساخت فرمت نهایی
+        b64_str = b64encode(encrypted_bytes).decode('utf-8')
+        
+        return f"happ://crypt4/{b64_str}"
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1125,7 +1169,7 @@ async def create_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         "trafficLimitStrategy": "NO_RESET",
         "expireAt": expire_at,
         "description": description,
-        "tag": generate_random_string(8).upper(),
+        "tags": generate_random_string(8).upper(),
         "email": f"{generate_random_string(5)}@placeholder.com",
         "telegramId": 0,
         "hwidDeviceLimit": hwid_limit,
@@ -1206,11 +1250,11 @@ async def banner_generation_handler(update: Update, context: ContextTypes.DEFAUL
     
     try:
         if action == 'banner_happ':
-            # Encrypt for Happ
-            encrypt_payload = {"linkToEncrypt": raw_sub_link}
-            enc_data, enc_error = await asyncio.to_thread(api_request, 'POST', '/api/system/tools/happ/encrypt', payload=encrypt_payload)
-            if not enc_error and enc_data and 'response' in enc_data:
-                final_link = enc_data['response'].get('encryptedLink')
+            try:
+                final_link = await asyncio.to_thread(HappCrypto.encrypt_link, raw_sub_link)
+            except Exception as e:
+                logger.error(f"Happ encryption failed: {e}")
+                final_link = raw_sub_link # Fallback
         
         # Format Caption
         caption = t('banner_caption_template', context,
@@ -1576,18 +1620,15 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await query.answer(text="لینک اشتراک یافت نشد.", show_alert=True)
             return USER_MENU
 
-        # مرحله 2: تبدیل به لینک Happ (رمزنگاری)
-        # طبق مستندات: POST /api/system/tools/happ/encrypt
-        encrypt_payload = {"linkToEncrypt": raw_sub_url}
-        enc_data, enc_error = await asyncio.to_thread(api_request, 'POST', '/api/system/tools/happ/encrypt', payload=encrypt_payload)
-        
+        # مرحله 2: تبدیل به لینک Happ (رمزنگاری محلی در پایتون)
+        try:
+            final_happ_link = await asyncio.to_thread(HappCrypto.encrypt_link, raw_sub_url)
+        except Exception as e:
+            logger.error(f"Happ encryption failed: {e}")
+            final_happ_link = None
+
         try: await wait_msg.delete() 
         except: pass
-
-        final_happ_link = None
-        
-        if not enc_error and enc_data and 'response' in enc_data:
-            final_happ_link = enc_data['response'].get('encryptedLink')
         
         # فال‌بک: اگر رمزنگاری انجام نشد، همان لینک اصلی را بده
         if not final_happ_link:
@@ -2467,7 +2508,7 @@ async def run_bulk_creation_background(task_data: dict):
             "trafficLimitStrategy": "NO_RESET",
             "expireAt": expire_at,
             "description": description,
-            "tag": generate_random_string(8).upper(),
+            "tags": generate_random_string(8).upper(),
             "hwidDeviceLimit": hwid,
             "activeInternalSquads": internal_squads
         }
@@ -2491,9 +2532,11 @@ async def run_bulk_creation_background(task_data: dict):
 
         final_link = raw_sub_link
         if banner_type == 'happ':
-            enc_data, enc_error = await asyncio.to_thread(api_request, 'POST', '/api/system/tools/happ/encrypt', payload={"linkToEncrypt": raw_sub_link})
-            if not enc_error and enc_data and 'response' in enc_data:
-                final_link = enc_data['response'].get('encryptedLink', raw_sub_link)
+            try:
+                final_link = await asyncio.to_thread(HappCrypto.encrypt_link, raw_sub_link)
+            except Exception as e:
+                logger.error(f"Bulk Happ encryption failed: {e}")
+                final_link = raw_sub_link # Fallback
 
         caption = job_t('banner_caption_template', username=username, limit=limit_str, expire_date=expire_date_str, link=final_link)
         qr_bytes = generate_qr_code(final_link)
