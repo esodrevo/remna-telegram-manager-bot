@@ -247,7 +247,7 @@ async def api_request_get_sub_history(start=0, size=100):
     data, error = await asyncio.to_thread(api_request, 'GET', '/api/subscription-request-history', params=params)
     return data, error
 
-async def get_user_latest_sub_history(user_uuid: str):
+async def get_user_latest_sub_history(user_id: str):
     """
     پیدا کردن آخرین لاگ آپدیت برای یک کاربر خاص.
     برای جلوگیری از کند شدن ربات در پنل‌های شلوغ، نهایتاً 1000 رکورد آخر را چک می‌کنیم.
@@ -264,7 +264,7 @@ async def get_user_latest_sub_history(user_uuid: str):
             break
             
         for rec in records:
-            if rec.get('userUuid') == user_uuid:
+            if rec.get('userId') == user_id:
                 return rec # اولین موردی که پیدا شد (چون لاگ‌ها معمولاً از جدید به قدیم هستند)
                 
         start += size
@@ -717,14 +717,14 @@ async def run_bulk_update_background(task_data: dict):
         skipped_count = 0
         
         for user in users:
-            user_uuid = user.get('uuid')
+            user_id = user.get('id')
             username = user.get('username', 'N/A')
             
-            if not user_uuid:
+            if not user_id:
                 failed_count += 1
                 continue
             
-            payload = {'uuid': user_uuid}
+            payload = {'id': user_id}
             should_update = False
             
             if edit_type == 'volume':
@@ -824,7 +824,7 @@ async def process_hours_and_fetch_users(update: Update, context: ContextTypes.DE
         return ConversationHandler.END
 
     all_users_list = all_users_response.get('response', {}).get('users', [])
-    uuid_to_username = {u.get('uuid'): u.get('username') for u in all_users_list if u.get('uuid')}
+    uuid_to_username = {u.get('id'): u.get('username') for u in all_users_list if u.get('id')}
 
     # ۲. فیلتر زمان
     now_utc = datetime.now(timezone.utc)
@@ -854,9 +854,9 @@ async def process_hours_and_fetch_users(update: Update, context: ContextTypes.DE
             
             # اگر زمان درخواست جدیدتر از حد مشخص شده (N ساعت) است
             if req_dt >= time_threshold:
-                user_uuid = rec.get('userUuid')
-                if user_uuid:
-                    active_uuids.add(user_uuid)
+                user_id = rec.get('userId')
+                if user_id:
+                    active_uuids.add(user_id)
             else:
                 # چون لاگ‌ها نزولی مرتب شده‌اند، وقتی به دیتای قدیمی‌تر رسیدیم جستجو را متوقف می‌کنیم
                 fetch_more = False
@@ -1350,10 +1350,10 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if error:
         await sent_message.edit_text(t('error_fetching', context, error=error), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t('back_to_main_menu_btn', context), callback_data='back_to_main')]])); return AWAITING_USERNAME
     user_data = data.get('response', {})
-    user_uuid = user_data.get('uuid')
+    user_id = user_data.get('id')
     
     # +++ بخش جدید: تزریق اطلاعات تاریخچه سابسکریپشن به دیتای کاربر +++
-    latest_history = await get_user_latest_sub_history(user_uuid)
+    latest_history = await get_user_latest_sub_history(user_id)
     if latest_history:
         user_data['subLastUserAgent'] = latest_history.get('userAgent')
         user_data['subLastOpenedAt'] = latest_history.get('requestAt')
@@ -1364,7 +1364,7 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
     context.user_data['user_data'] = user_data
-    context.user_data['user_uuid'] = user_uuid
+    context.user_data['user_id'] = user_id
     message_text = build_user_info_message(user_data, context)
 
     enable_disable_button = InlineKeyboardButton(t('disable_user_btn', context), callback_data='disable_user') \
@@ -1406,12 +1406,12 @@ async def show_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def show_hwid_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     username = context.user_data.get('username')
-    user_uuid = context.user_data.get('user_uuid')
+    user_id = context.user_data.get('user_id')
     user_data = context.user_data.get('user_data', {})
     hwid_limit = user_data.get('hwidDeviceLimit', 0)
 
     # دریافت لیست دستگاه‌ها از API برای نمایش تعداد
-    data, error = await asyncio.to_thread(api_request, 'GET', f'/api/hwid/devices/{user_uuid}')
+    data, error = await asyncio.to_thread(api_request, 'GET', f'/api/hwid/devices/{user_id}')
     devices = data.get('response', {}).get('devices', []) if not error and data else []
     count = len(devices)
 
@@ -1431,12 +1431,12 @@ async def show_hwid_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
 async def render_hwid_list_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    user_uuid = context.user_data.get('user_uuid')
+    user_id = context.user_data.get('user_id')
     username = context.user_data.get('username')
     
     await query.message.edit_text("⏳ در حال دریافت لیست دستگاه‌ها...")
     
-    data, error = await asyncio.to_thread(api_request, 'GET', f'/api/hwid/devices/{user_uuid}')
+    data, error = await asyncio.to_thread(api_request, 'GET', f'/api/hwid/devices/{user_id}')
     devices = data.get('response', {}).get('devices', []) if data and not error else []
     
     if not devices:
@@ -1504,8 +1504,8 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return USER_MENU
         
     if action == 'do_reset_all_hwid':
-        user_uuid = context.user_data.get('user_uuid')
-        payload = {"userUuid": user_uuid}
+        user_id = context.user_data.get('user_id')
+        payload = {"userId": user_id}
         _, error = await asyncio.to_thread(api_request, 'POST', '/api/hwid/devices/delete-all', payload=payload)
         
         if error:
@@ -1525,8 +1525,8 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await query.answer("❌ خطا: دستگاه یافت نشد. لطفاً منو را رفرش کنید.", show_alert=True)
             return USER_MENU
             
-        user_uuid = context.user_data.get('user_uuid')
-        payload = {"userUuid": user_uuid, "hwid": hwid_to_del}
+        user_id = context.user_data.get('user_id')
+        payload = {"userId": user_id, "hwid": hwid_to_del}
         
         _, error = await asyncio.to_thread(api_request, 'POST', '/api/hwid/devices/delete', payload=payload)
         
@@ -1714,9 +1714,9 @@ async def user_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         elif action == 'disable_user': action_str, popup_text, success_text = 'disable', t('disabling_user', context), t('user_disabled_success', context)
         elif action == 'reset_usage': action_str, popup_text, success_text = 'reset-traffic', t('reseting_usage', context), t('reset_usage_success', context)
         await query.answer(text=popup_text, show_alert=False)
-        user_uuid = context.user_data.get('user_uuid')
-        if not user_uuid: await query.answer(text="Error: User UUID not found.", show_alert=True); return USER_MENU
-        endpoint = f'/api/users/{user_uuid}/actions/{action_str}'
+        user_id = context.user_data.get('user_id')
+        if not user_id: await query.answer(text="Error: User UUID not found.", show_alert=True); return USER_MENU
+        endpoint = f'/api/users/{user_id}/actions/{action_str}'
         _, error = await asyncio.to_thread(api_request, 'POST', endpoint)
         if error: await query.answer(text=f"API Error: {error}", show_alert=True)
         else:
@@ -1746,12 +1746,12 @@ async def delete_user_confirmation_handler(update: Update, context: ContextTypes
         return await show_user_card(update, context)
 
     if action == 'confirm_delete':
-        user_uuid = context.user_data.get('user_uuid')
+        user_id = context.user_data.get('user_id')
         username = context.user_data.get('username', '')
         
         await query.message.edit_text(f"⏳ در حال حذف کاربر {username}...")
         
-        _, error = await asyncio.to_thread(api_request, 'DELETE', f'/api/users/{user_uuid}')
+        _, error = await asyncio.to_thread(api_request, 'DELETE', f'/api/users/{user_id}')
         
         final_text = ""
         if error:
@@ -1781,10 +1781,10 @@ async def set_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         except BadRequest:
             pass
 
-    user_uuid = context.user_data.get('user_uuid')
-    if not user_uuid: return await start(update, context)
+    user_id = context.user_data.get('user_id')
+    if not user_id: return await start(update, context)
     
-    payload = {'uuid': user_uuid}
+    payload = {'id': user_id}
     current_state = AWAITING_LIMIT
 
     try:
@@ -1881,11 +1881,11 @@ async def edit_user_squads_handler(update: Update, context: ContextTypes.DEFAULT
     action = query.data
 
     if action == 'edit_squads_final':
-        user_uuid = context.user_data.get('user_uuid')
+        user_id = context.user_data.get('user_id')
         selected_squads = list(context.user_data.get('selected_squads', []))
 
         payload = {
-            'uuid': user_uuid,
+            'id': user_id,
             'activeInternalSquads': selected_squads
         }
 
@@ -2145,13 +2145,13 @@ async def get_cleanup_hours(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if hours > 0:
             threshold = now_utc - timedelta(hours=hours)
             if expire_dt <= threshold:
-                uuids_to_delete.append(user.get('uuid'))
+                uuids_to_delete.append(user.get('id'))
         else: # hours == 0
             if target_status == 'EXPIRED':
-                uuids_to_delete.append(user.get('uuid'))
+                uuids_to_delete.append(user.get('id'))
             elif target_status == 'DISABLED':
                 if expire_dt <= now_utc:
-                    uuids_to_delete.append(user.get('uuid'))
+                    uuids_to_delete.append(user.get('id'))
                     
     if not uuids_to_delete:
         await wait_message.edit_text(
@@ -2194,7 +2194,7 @@ async def confirm_cleanup_action_handler(update: Update, context: ContextTypes.D
     
     for i in range(0, len(uuids), batch_size):
         batch = uuids[i:i + batch_size]
-        payload = {"uuids": batch}
+        payload = {"userIds": batch}
         _, error = await asyncio.to_thread(api_request, 'POST', '/api/users/bulk/delete', payload=payload)
         
         if error:
@@ -2644,7 +2644,7 @@ async def ext_squad_selected_for_edit_handler(update: Update, context: ContextTy
     matching_uuids = []
     for u in all_users:
         if u.get('externalSquadUuid') == sq_uuid:
-            matching_uuids.append(u.get('uuid'))
+            matching_uuids.append(u.get('id'))
             
     context.user_data['ext_edit_target_uuids'] = matching_uuids
     
@@ -2711,7 +2711,7 @@ async def confirm_ext_squad_action_handler(update: Update, context: ContextTypes
         endpoint = '/api/users/bulk/delete'
         for i in range(0, len(uuids), batch_size):
             batch = uuids[i:i + batch_size]
-            _, error = await asyncio.to_thread(api_request, 'POST', endpoint, payload={"uuids": batch})
+            _, error = await asyncio.to_thread(api_request, 'POST', endpoint, payload={"userIds": batch})
             if error:
                 has_error = True; error_msg = error; break
                 
@@ -2721,7 +2721,7 @@ async def confirm_ext_squad_action_handler(update: Update, context: ContextTypes
         for i in range(0, len(uuids), batch_size):
             batch = uuids[i:i + batch_size]
             payload = {
-                "uuids": batch,
+                "userIds": batch,
                 "fields": {"status": status_val}
             }
             _, error = await asyncio.to_thread(api_request, 'POST', endpoint, payload=payload)
@@ -2865,7 +2865,7 @@ async def onhold_monitor_job(context: ContextTypes.DEFAULT_TYPE):
                     new_expire = first_connect_dt + timedelta(days=days)
                     
                     update_payload = {
-                        "uuid": user.get('uuid'),
+                        "id": user.get('id'),
                         "expireAt": new_expire.isoformat().replace('+00:00', 'Z'),
                         "description": "" 
                     }
