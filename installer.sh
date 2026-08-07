@@ -350,6 +350,32 @@ restart_bot() {
     pause
 }
 
+# --- اضافه شدن تابع تغییر API توکن ---
+update_api_token() {
+    check_root
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo -e "${RED}Configuration file not found. Please install the bot first.${NC}"
+        pause
+        return
+    fi
+    
+    echo -e "${YELLOW}--- Update Panel API Token ---${NC}"
+    read -p "Enter your new Remna panel API Token: " new_api_token
+    if [ -z "$new_api_token" ]; then
+        echo -e "${RED}Token cannot be empty. Operation cancelled.${NC}"
+        pause
+        return
+    fi
+    
+    sed -i "s|^PANEL_API_TOKEN[[:space:]]*=.*|PANEL_API_TOKEN = '$new_api_token'|g" "$CONFIG_FILE"
+    
+    echo -e "${GREEN}API Token updated successfully.${NC}"
+    echo "Restarting bot to apply changes..."
+    systemctl restart "$BOT_SERVICE_NAME"
+    pause
+}
+# ------------------------------------
+
 add_node_menu() {
     while true; do
         clear
@@ -600,6 +626,7 @@ show_menu() {
         echo "  4) Remove Nodes"
         echo "  5) Backup Management"
         echo "  6) Uninstall Bot"
+		echo "  7) Update API Token"
         echo "  0) Exit"
         echo "----------------------------------------"
         read -p "Enter your choice: " choice
@@ -610,6 +637,7 @@ show_menu() {
             4) remove_node ;;
             5) backup_menu ;;
             6) uninstall_bot ;;
+			7) update_api_token ;;
             0) break ;;
             *) echo -e "${RED}Invalid option. Please try again.${NC}"; pause ;;
         esac
